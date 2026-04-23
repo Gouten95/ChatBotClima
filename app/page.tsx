@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 // Tipo para que TypeScript no se queje del formato de memoria
 type MensajeHistorial = {
@@ -104,6 +105,12 @@ export default function Home() {
   const [cargando, setCargando] = useState(false);
   const [errorCritico, setErrorCritico] = useState(''); // Para mostrar tus errores de API
   const [avisoFallback, setAvisoFallback] = useState<FallbackInfo | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [historial, cargando, errorCritico, avisoFallback]);
 
   const enviarMensaje = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,7 +171,10 @@ export default function Home() {
       <h1 className="text-3xl font-bold text-blue-600">🌤️ El Señor del Clima</h1>
       
       {/* Caja de chat con historial */}
-      <div className="bg-gray-100 p-6 rounded-lg flex-1 overflow-y-auto border border-gray-300 flex flex-col gap-4">
+      <div
+        ref={chatContainerRef}
+        className="bg-gray-100 p-6 rounded-lg flex-1 overflow-y-auto border border-gray-300 flex flex-col gap-4"
+      >
         {historial.length === 0 && !errorCritico && (
           <p className="text-gray-500 text-center mt-10">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
         )}
@@ -203,12 +213,29 @@ export default function Home() {
                 </span>
               )}
             </div>
-            <p className="whitespace-pre-wrap mt-1">{msg.parts[0].text}</p>
+            {msg.role === 'model' ? (
+              <div className="mt-2 text-[15px] leading-7">
+                <ReactMarkdown
+                  components={{
+                    p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                    ol: ({ children }) => <ol className="mb-3 list-decimal pl-5 space-y-1">{children}</ol>,
+                    ul: ({ children }) => <ul className="mb-3 list-disc pl-5 space-y-1">{children}</ul>,
+                    li: ({ children }) => <li>{children}</li>,
+                    strong: ({ children }) => <strong className="font-semibold text-gray-950">{children}</strong>,
+                  }}
+                >
+                  {msg.parts[0].text}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap mt-1">{msg.parts[0].text}</p>
+            )}
           </div>
         ))}
         
         {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
         {errorCritico && <p className="text-red-600 font-bold bg-red-100 p-3 rounded">{errorCritico}</p>}
+        <div ref={chatBottomRef} />
       </div>
 
       <form onSubmit={enviarMensaje} className="flex gap-2 pb-10">

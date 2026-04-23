@@ -30,6 +30,22 @@ type ClimaDebug = {
   error: string | null;
 };
 
+type DailyWeatherResponse = {
+  time?: string[];
+  temperature_2m_max?: number[];
+  temperature_2m_min?: number[];
+  precipitation_sum?: number[];
+};
+
+type OpenMeteoForecastResponse = {
+  current?: {
+    temperature_2m?: number;
+    relative_humidity_2m?: number;
+    precipitation?: number;
+  };
+  daily?: DailyWeatherResponse;
+};
+
 function buildQuotaFallbackMessage() {
   const hora = new Date().toLocaleTimeString("es-MX", {
     hour: "2-digit",
@@ -159,6 +175,44 @@ function buildFallbackResponseBody(
   };
 }
 
+function formatDailyClimateContext(daily: DailyWeatherResponse | undefined) {
+  if (
+    !daily ||
+    !Array.isArray(daily.time) ||
+    !Array.isArray(daily.temperature_2m_max) ||
+    !Array.isArray(daily.temperature_2m_min) ||
+    !Array.isArray(daily.precipitation_sum)
+  ) {
+    return "No hay resumen diario disponible para dias anteriores o proximos.";
+  }
+
+  const summaries: string[] = [];
+
+  for (let index = 0; index < daily.time.length; index += 1) {
+    const fecha = daily.time[index];
+    const maxima = daily.temperature_2m_max[index];
+    const minima = daily.temperature_2m_min[index];
+    const precipitacion = daily.precipitation_sum[index];
+
+    if (
+      typeof fecha !== "string" ||
+      typeof maxima !== "number" ||
+      typeof minima !== "number" ||
+      typeof precipitacion !== "number"
+    ) {
+      continue;
+    }
+
+    summaries.push(
+      `${fecha}: min ${minima}°C, max ${maxima}°C, precipitacion ${precipitacion}mm`,
+    );
+  }
+
+  return summaries.length > 0
+    ? summaries.join(" | ")
+    : "No hay resumen diario disponible para dias anteriores o proximos.";
+}
+
 function mapHistorialToOpenAIMessages(historialUsuario: unknown[]) {
   const mensajes: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
@@ -261,23 +315,24 @@ export async function POST(request: Request) {
       // Coordenadas de Culiacán y parámetros de Open-Meteo
       const lat = 24.8069;
       const lon = -107.3938;
-      const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation&timezone=auto`;
+      const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
 
       const respuestaClima = await fetch(urlClima);
       if (respuestaClima.ok) {
-        const datosReales = await respuestaClima.json();
-        const temp = datosReales.current.temperature_2m;
-        const humedad = datosReales.current.relative_humidity_2m;
-        const lluvia = datosReales.current.precipitation;
+        const datosReales = (await respuestaClima.json()) as OpenMeteoForecastResponse;
+        const temp = datosReales.current?.temperature_2m;
+        const humedad = datosReales.current?.relative_humidity_2m;
+        const lluvia = datosReales.current?.precipitation;
+        const dailyContext = formatDailyClimateContext(datosReales.daily);
 
-        datosDelClimaAPI = `${temp}°C, Humedad: ${humedad}%, Precipitación: ${lluvia}mm.`;
+        datosDelClimaAPI = `Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. Resumen diario reciente y proximo: ${dailyContext}.`;
         climaDebug = {
           fuente: "open-meteo",
           ciudad,
           actualizadoEn: fechaYHoraActual,
-          temperaturaC: temp,
-          humedadPct: humedad,
-          precipitacionMm: lluvia,
+          temperaturaC: typeof temp === "number" ? temp : null,
+          humedadPct: typeof humedad === "number" ? humedad : null,
+          precipitacionMm: typeof lluvia === "number" ? lluvia : null,
           error: null,
         };
       } else {
@@ -310,7 +365,7 @@ export async function POST(request: Request) {
     }
 
     // Inyectamos contexto secretamente
-    const contextoSistema = `Hoy es ${fechaYHoraActual} en ${ciudad}. El clima actual es: ${datosDelClimaAPI}. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendación final.`;
+    const contextoSistema = `Hoy es ${fechaYHoraActual} en ${ciudad}. Usa unicamente estos datos meteorologicos verificados: ${datosDelClimaAPI}. Puedes responder sobre clima actual, pasado cercano y futuro cercano solo si aparece en estos datos. Si te preguntan por una fecha, ciudad o periodo que no este respaldado por estos datos, dilo con claridad y no inventes. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendacion final.`;
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemInstruction },
