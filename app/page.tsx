@@ -405,7 +405,18 @@ export default function Home() {
               )}
             </div>
             {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 1 && (
-              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-3">
+                <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Comparación de ciudades</p>
+                    <p className="mt-1 text-xs text-slate-500">Resumen visual para detectar rápidamente qué ciudad está peor por aire o por clima actual.</p>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
+                    {msg.resumenCiudades.length} ciudades
+                  </span>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
                   <p className="text-sm font-semibold text-slate-900">Ranking aire</p>
                   <p className="mt-1 text-xs text-slate-500">Ordenado por AQI europeo más alto.</p>
@@ -436,6 +447,8 @@ export default function Home() {
                       </div>
                     ))}
                   </div>
+                </div>
+
                 </div>
               </div>
             )}

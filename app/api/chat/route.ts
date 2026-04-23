@@ -483,7 +483,7 @@ function getAirQualityRecommendationText(categoria: string | null) {
 }
 
 function hasComparisonIntent(message: string) {
-  return /\b(compar|contra|versus|vs|igual que|mejor que|peor que|comparala|compárala|cual ciudad|cuál ciudad|peor clima|mejor clima|peor calidad|mejor calidad)\b/i.test(message);
+  return /\b(compar|comparalo|compáralo|comparala|compárala|comparalos|compáralos|comparalas|compáralas|contra|versus|vs|igual que|mejor que|peor que|cual ciudad|cuál ciudad|peor clima|mejor clima|peor calidad|mejor calidad)\b/i.test(message);
 }
 
 function normalizeText(value: string) {
@@ -690,7 +690,7 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
     /\bde\s+([^!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
     /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^!?]+)/i,
     /\bcompar(?:a|ame|áme)?\s+([^!?]+?)\s+(?:y|vs|contra)\s+([^!?]+)/i,
-    /\bcompar(?:a|ala|ála)?\s+con\s+(?:el\s+clima\s+de\s+)?([^!?]+)/i,
+    /\bcompar[a-záéíóúñ]*\s+con\s+(?:el\s+clima\s+de\s+)?([^!?]+)/i,
     /\bentre\s+([^!?]+?)\s+y\s+([^!?]+)/i,
     /\b(?:cual|cuál)\s+ciudad[^!?]*\b(?:entre|de)\s+([^!?]+)/i,
     /^(?:y|tambien|ahora)\s+([^!?]+)$/i,
