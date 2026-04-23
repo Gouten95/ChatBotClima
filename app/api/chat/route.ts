@@ -5,6 +5,9 @@ import { NextResponse } from "next/server";
 
 const DEFAULT_QUOTA_COOLDOWN_MS = 5 * 60 * 1000;
 const DEFAULT_OVERLOAD_COOLDOWN_MS = 45 * 1000;
+const DEFAULT_CITY_NAME = "Culiacán, Sinaloa";
+const DEFAULT_CITY_LAT = 24.8069;
+const DEFAULT_CITY_LON = -107.3938;
 let providerCooldownUntil = 0;
 let cooldownMotivo:
   | "quota_cooldown"
@@ -46,13 +49,29 @@ type OpenMeteoForecastResponse = {
   daily?: DailyWeatherResponse;
 };
 
-function buildQuotaFallbackMessage() {
+type OpenMeteoGeocodingResponse = {
+  results?: Array<{
+    name?: string;
+    admin1?: string;
+    country?: string;
+    latitude?: number;
+    longitude?: number;
+  }>;
+};
+
+type ResolvedCity = {
+  displayName: string;
+  latitude: number;
+  longitude: number;
+};
+
+function buildQuotaFallbackMessage(ciudad: string) {
   const hora = new Date().toLocaleTimeString("es-MX", {
     hour: "2-digit",
     minute: "2-digit",
   });
 
-  return `El servicio de OpenAI está al límite en este momento (${hora}), pero no lo dejamos ahi. Para Culiacan te recomiendo ropa ligera y transpirable, y llevar una capa ligera por si cambia el viento al atardecer. Si vas a salir, hidratarte y buscar sombra en las horas mas fuertes del sol es la mejor estrategia. En cuanto se normalice el servicio, te doy un pronostico mas fino con todos los detalles.`;
+  return `El servicio de OpenAI está al límite en este momento (${hora}), pero no lo dejamos ahi. Para ${ciudad} te recomiendo ropa ligera y transpirable, y llevar una capa ligera por si cambia el viento al atardecer. Si vas a salir, hidratarte y buscar sombra en las horas mas fuertes del sol es la mejor estrategia. En cuanto se normalice el servicio, te doy un pronostico mas fino con todos los detalles.`;
 }
 
 function getCooldownSecondsRemaining() {
@@ -136,22 +155,22 @@ function getTransientOpenAIErrorKind(error: unknown, detalle: string, status: nu
   return null;
 }
 
-function buildOverloadFallbackMessage() {
+function buildOverloadFallbackMessage(ciudad: string) {
   const hora = new Date().toLocaleTimeString("es-MX", {
     hour: "2-digit",
     minute: "2-digit",
   });
 
-  return `En este momento (${hora}) el servicio de OpenAI esta muy saturado y tarda en responder, pero seguimos al pendiente del clima. Para Culiacan: ropa ligera, agua a la mano y preferir sombra en horas de sol fuerte. Si sales al atardecer, lleva una capa ligera por cambio de viento. Intenta de nuevo en unos segundos y te doy un pronostico mas detallado.`;
+  return `En este momento (${hora}) el servicio de OpenAI esta muy saturado y tarda en responder, pero seguimos al pendiente del clima. Para ${ciudad}: ropa ligera, agua a la mano y preferir sombra en horas de sol fuerte. Si sales al atardecer, lleva una capa ligera por cambio de viento. Intenta de nuevo en unos segundos y te doy un pronostico mas detallado.`;
 }
 
-function buildNetworkFallbackMessage() {
+function buildNetworkFallbackMessage(ciudad: string) {
   const hora = new Date().toLocaleTimeString("es-MX", {
     hour: "2-digit",
     minute: "2-digit",
   });
 
-  return `A las ${hora} no pudimos conectar con OpenAI por un problema temporal de red, pero seguimos cubriendo el clima con datos alternos. Para Culiacan: ropa ligera, hidratarte bien y considerar sombra si sales al mediodia. Si tu plan es por la tarde, una capa ligera sigue siendo buena idea por cambios de viento.`;
+  return `A las ${hora} no pudimos conectar con OpenAI por un problema temporal de red, pero seguimos cubriendo el clima con datos alternos. Para ${ciudad}: ropa ligera, hidratarte bien y considerar sombra si sales al mediodia. Si tu plan es por la tarde, una capa ligera sigue siendo buena idea por cambios de viento.`;
 }
 
 function buildFallbackResponseBody(
@@ -159,12 +178,13 @@ function buildFallbackResponseBody(
   reintentarEnSegundos: number,
   climaOpenMeteo: ClimaDebug,
 ) {
+  const ciudad = climaOpenMeteo.ciudad || DEFAULT_CITY_NAME;
   const respuesta =
     motivo === "quota_cooldown" || motivo === "quota_exceeded"
-      ? buildQuotaFallbackMessage()
+      ? buildQuotaFallbackMessage(ciudad)
       : motivo === "network_error" || motivo === "network_error_cooldown"
-        ? buildNetworkFallbackMessage()
-        : buildOverloadFallbackMessage();
+        ? buildNetworkFallbackMessage(ciudad)
+        : buildOverloadFallbackMessage(ciudad);
 
   return {
     respuesta,
@@ -211,6 +231,135 @@ function formatDailyClimateContext(daily: DailyWeatherResponse | undefined) {
   return summaries.length > 0
     ? summaries.join(" | ")
     : "No hay resumen diario disponible para dias anteriores o proximos.";
+}
+
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function trimTrailingTimeWords(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\b(hoy|manana|ayer|ahora|ahorita|actualmente|este momento|esta tarde|esta noche|esta manana|manana en la tarde|manana por la tarde|por la manana|por la tarde|por la noche|el fin de semana|este fin de semana|pasado manana)\b.*$/i, "")
+    .replace(/^[\s,.-]+|[\s,.-]+$/g, "")
+    .trim();
+}
+
+function isLikelyCityCandidate(value: string) {
+  const normalized = normalizeText(value);
+  const blockedTerms = new Set([
+    "salir",
+    "ropa",
+    "parque",
+    "hoy",
+    "manana",
+    "ayer",
+    "ahora",
+    "ahorita",
+    "actualmente",
+    "clima",
+    "tiempo",
+    "pronostico",
+    "temperatura",
+    "lluvia",
+    "humedad",
+    "fin de semana",
+    "esta tarde",
+    "esta noche",
+    "esta manana",
+  ]);
+
+  if (!normalized || blockedTerms.has(normalized)) {
+    return false;
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 5) {
+    return false;
+  }
+
+  const invalidWordCount = words.filter((word) => blockedTerms.has(word)).length;
+  return invalidWordCount < words.length;
+}
+
+function extractRequestedCity(mensajeUsuario: string) {
+  const message = mensajeUsuario.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
+  const patterns = [
+    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad)[^.!?]*\ben\s+([^,.!?]+)/i,
+    /\ben\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (!candidate) continue;
+
+    const cleaned = trimTrailingTimeWords(candidate)
+      .replace(/^(la ciudad de|ciudad de|el clima de|clima de|el tiempo de|tiempo de)\s+/i, "")
+      .trim();
+
+    if (cleaned.length >= 2 && isLikelyCityCandidate(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  return null;
+}
+
+async function resolveRequestedCity(mensajeUsuario: string) {
+  const cityCandidate = extractRequestedCity(mensajeUsuario);
+
+  if (!cityCandidate) {
+    return {
+      city: {
+        displayName: DEFAULT_CITY_NAME,
+        latitude: DEFAULT_CITY_LAT,
+        longitude: DEFAULT_CITY_LON,
+      } satisfies ResolvedCity,
+      requestedCity: null,
+    };
+  }
+
+  const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
+  const response = await fetch(geocodingUrl);
+
+  if (!response.ok) {
+    return {
+      error: "No se pudo ubicar la ciudad solicitada por un problema temporal.",
+      status: 503,
+    };
+  }
+
+  const data = (await response.json()) as OpenMeteoGeocodingResponse;
+  const result = data.results?.[0];
+
+  if (
+    !result ||
+    typeof result.latitude !== "number" ||
+    typeof result.longitude !== "number" ||
+    typeof result.name !== "string"
+  ) {
+    return {
+      error: `No pude ubicar la ciudad "${cityCandidate}". Intenta con un nombre mas especifico.`,
+      status: 400,
+    };
+  }
+
+  const displayName = [result.name, result.admin1, result.country]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(", ");
+
+  return {
+    city: {
+      displayName,
+      latitude: result.latitude,
+      longitude: result.longitude,
+    } satisfies ResolvedCity,
+    requestedCity: cityCandidate,
+  };
 }
 
 function mapHistorialToOpenAIMessages(historialUsuario: unknown[]) {
@@ -266,7 +415,7 @@ async function getSystemInstruction() {
 export async function POST(request: Request) {
   let climaDebug: ClimaDebug = {
     fuente: "no-consultado",
-    ciudad: "Culiacán, Sinaloa",
+    ciudad: DEFAULT_CITY_NAME,
     actualizadoEn: new Date().toLocaleString(),
     temperaturaC: null,
     humedadPct: null,
@@ -296,11 +445,22 @@ export async function POST(request: Request) {
       );
     }
 
+    const cityResolution = await resolveRequestedCity(mensajeUsuario);
+    if ("error" in cityResolution) {
+      return NextResponse.json(
+        { error: cityResolution.error },
+        { status: cityResolution.status },
+      );
+    }
+
+    const ciudad = cityResolution.city.displayName;
+    const lat = cityResolution.city.latitude;
+    const lon = cityResolution.city.longitude;
+
     const openai = new OpenAI({ apiKey });
     const systemInstruction = await getSystemInstruction();
 
     // --- INICIO DE LA LLAMADA A LA API REAL ---
-    const ciudad = "Culiacán, Sinaloa";
     const fechaYHoraActual = new Date().toLocaleString();
     let datosDelClimaAPI = "Datos no disponibles temporalmente.";
 
@@ -312,9 +472,6 @@ export async function POST(request: Request) {
     };
 
     try {
-      // Coordenadas de Culiacán y parámetros de Open-Meteo
-      const lat = 24.8069;
-      const lon = -107.3938;
       const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
 
       const respuestaClima = await fetch(urlClima);
