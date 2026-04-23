@@ -194,32 +194,6 @@ function getMessageAirTone(resumenCiudades?: ResumenCiudad[]) {
   }, null);
 
   switch (worstCategory) {
-    case 'moderada':
-      return {
-        caja: 'bg-amber-50 border-amber-200 shadow-amber-100/60',
-        markdown: 'text-amber-950',
-      };
-    case 'mala':
-      return {
-        caja: 'bg-orange-50 border-orange-200 shadow-orange-100/60',
-        markdown: 'text-orange-950',
-      };
-    case 'muy mala':
-    case 'extremadamente mala':
-      return {
-        caja: 'bg-red-50 border-red-200 shadow-red-100/70',
-        markdown: 'text-red-950',
-      };
-    case 'aceptable':
-      return {
-        caja: 'bg-lime-50 border-lime-200 shadow-lime-100/60',
-        markdown: 'text-lime-950',
-      };
-    case 'buena':
-      return {
-        caja: 'bg-emerald-50 border-emerald-200 shadow-emerald-100/60',
-        markdown: 'text-emerald-950',
-      };
     default:
       return {
         caja: 'bg-white border-gray-200 shadow',
@@ -239,15 +213,7 @@ function getSummaryGridClass(resumenCiudades?: ResumenCiudad[]) {
     return 'grid-cols-1';
   }
 
-  if (total === 2) {
-    return 'grid-cols-1 lg:grid-cols-2';
-  }
-
-  if (total === 3) {
-    return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3';
-  }
-
-  return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
+  return 'grid-cols-1 md:grid-cols-2';
 }
 
 function getMessageWidthClass(msg: MensajeHistorial) {
@@ -266,6 +232,16 @@ function getMessageWidthClass(msg: MensajeHistorial) {
   }
 
   return 'w-full max-w-full';
+}
+
+function getSummaryCardSpanClass(index: number, resumenCiudades?: ResumenCiudad[]) {
+  const total = resumenCiudades?.length ?? 0;
+
+  if (total > 1 && total % 2 !== 0 && index === total - 1) {
+    return 'md:col-span-2';
+  }
+
+  return '';
 }
 
 function getClimateSeverityScore(resumen: ResumenCiudad) {
@@ -465,12 +441,15 @@ export default function Home() {
             )}
             {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 0 && (
               <div className={`mt-3 grid gap-3 w-full ${getSummaryGridClass(msg.resumenCiudades)}`}>
-                {msg.resumenCiudades.map((resumen) => {
+                {msg.resumenCiudades.map((resumen, index) => {
                   const aire = getAirQualityVisual(resumen.calidadAireCategoria);
                   const recomendacionAire = getAirQualityRecommendation(resumen.calidadAireCategoria);
 
                   return (
-                    <div key={resumen.ciudad} className="rounded-xl border border-slate-200 bg-slate-50 p-3 w-full min-w-0">
+                    <div
+                      key={resumen.ciudad}
+                      className={`rounded-xl border border-slate-200 bg-slate-50 p-3 w-full min-w-0 ${getSummaryCardSpanClass(index, msg.resumenCiudades)}`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-slate-900 leading-5">{resumen.ciudad}</p>

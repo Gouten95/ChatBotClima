@@ -9,6 +9,176 @@ const DEFAULT_CITY_NAME = "Culiacán, Sinaloa";
 const DEFAULT_CITY_LAT = 24.8069;
 const DEFAULT_CITY_LON = -107.3938;
 const MAX_CITY_CANDIDATES = 5;
+const KNOWN_STATE_NAMES = new Set([
+  "aguascalientes",
+  "alabama",
+  "alaska",
+  "arizona",
+  "arkansas",
+  "baja california",
+  "baja california sur",
+  "california",
+  "campeche",
+  "colorado",
+  "connecticut",
+  "delaware",
+  "district of columbia",
+  "florida",
+  "chiapas",
+  "chihuahua",
+  "ciudad de mexico",
+  "coahuila",
+  "coahuila de zaragoza",
+  "colima",
+  "georgia",
+  "durango",
+  "estado de mexico",
+  "hawaii",
+  "idaho",
+  "illinois",
+  "indiana",
+  "iowa",
+  "kansas",
+  "kentucky",
+  "louisiana",
+  "maine",
+  "maryland",
+  "massachusetts",
+  "michigan",
+  "minnesota",
+  "mississippi",
+  "missouri",
+  "montana",
+  "guanajuato",
+  "guerrero",
+  "hidalgo",
+  "jalisco",
+  "nebraska",
+  "nevada",
+  "new hampshire",
+  "new jersey",
+  "new mexico",
+  "new york",
+  "north carolina",
+  "north dakota",
+  "michoacan",
+  "michoacan de ocampo",
+  "morelos",
+  "nayarit",
+  "nuevo leon",
+  "ohio",
+  "oklahoma",
+  "oaxaca",
+  "oregon",
+  "pennsylvania",
+  "puebla",
+  "queretaro",
+  "quintana roo",
+  "rhode island",
+  "san luis potosi",
+  "sinaloa",
+  "sonora",
+  "south carolina",
+  "south dakota",
+  "tabasco",
+  "tamaulipas",
+  "tennessee",
+  "texas",
+  "tlaxcala",
+  "utah",
+  "vermont",
+  "veracruz",
+  "veracruz de ignacio de la llave",
+  "virginia",
+  "washington",
+  "west virginia",
+  "wisconsin",
+  "wyoming",
+  "yucatan",
+  "zacatecas",
+  "al",
+  "ak",
+  "az",
+  "ar",
+  "ca",
+  "co",
+  "ct",
+  "dc",
+  "de",
+  "fl",
+  "ga",
+  "hi",
+  "ia",
+  "id",
+  "il",
+  "in",
+  "ks",
+  "ky",
+  "la",
+  "ma",
+  "md",
+  "me",
+  "mi",
+  "mn",
+  "mo",
+  "ms",
+  "mt",
+  "nc",
+  "nd",
+  "ne",
+  "nh",
+  "nj",
+  "nm",
+  "nv",
+  "ny",
+  "oh",
+  "ok",
+  "or",
+  "pa",
+  "ri",
+  "sc",
+  "sd",
+  "tn",
+  "tx",
+  "ut",
+  "va",
+  "vt",
+  "wa",
+  "wi",
+  "wv",
+  "wy",
+  "bc",
+  "bcs",
+  "camp",
+  "cdmx",
+  "chis",
+  "chih",
+  "coah",
+  "col",
+  "dgo",
+  "edomex",
+  "gto",
+  "gro",
+  "hgo",
+  "jal",
+  "mich",
+  "mor",
+  "nay",
+  "nl",
+  "oax",
+  "pue",
+  "qro",
+  "qroo",
+  "slp",
+  "sin",
+  "son",
+  "tab",
+  "tamps",
+  "tlax",
+  "ver",
+  "yuc",
+  "zac",
+]);
 let providerCooldownUntil = 0;
 let cooldownMotivo:
   | "quota_cooldown"
@@ -339,6 +509,51 @@ function normalizeCityAlias(value: string) {
     "mexico city": "Ciudad de Mexico",
     df: "Ciudad de Mexico",
     "edo mex": "Estado de Mexico",
+    edomex: "Estado de Mexico",
+    bc: "Baja California",
+    bcs: "Baja California Sur",
+    camp: "Campeche",
+    chis: "Chiapas",
+    chih: "Chihuahua",
+    coah: "Coahuila",
+    col: "Colima",
+    dgo: "Durango",
+    gto: "Guanajuato",
+    gro: "Guerrero",
+    hgo: "Hidalgo",
+    jal: "Jalisco",
+    mich: "Michoacan",
+    mor: "Morelos",
+    nay: "Nayarit",
+    nl: "Nuevo Leon",
+    oax: "Oaxaca",
+    pue: "Puebla",
+    qro: "Queretaro",
+    qroo: "Quintana Roo",
+    slp: "San Luis Potosi",
+    sin: "Sinaloa",
+    son: "Sonora",
+    tab: "Tabasco",
+    tamps: "Tamaulipas",
+    tlax: "Tlaxcala",
+    ver: "Veracruz",
+    yuc: "Yucatan",
+    zac: "Zacatecas",
+    ca: "California",
+    tx: "Texas",
+    ny: "New York",
+    fl: "Florida",
+    wa: "Washington",
+    il: "Illinois",
+    az: "Arizona",
+    co: "Colorado",
+    nj: "New Jersey",
+    pa: "Pennsylvania",
+    ga: "Georgia",
+    nc: "North Carolina",
+    sc: "South Carolina",
+    va: "Virginia",
+    dc: "District of Columbia",
   };
 
   return aliases[normalized] ?? value.trim();
@@ -411,26 +626,41 @@ function splitMultiLocationCandidate(value: string) {
   const commaCount = (cleaned.match(/,/g) || []).length;
   const separatorPattern = /\s+(?:vs|contra|versus|y|e|o)\s+/i;
 
+  const recombineStateSegments = (segments: string[]) => {
+    const merged: string[] = [];
+
+    for (const segment of segments) {
+      const trimmed = cleanCityCandidate(segment);
+      if (!trimmed) continue;
+
+      const normalized = normalizeText(trimmed);
+      const previous = merged[merged.length - 1];
+
+      if (previous && KNOWN_STATE_NAMES.has(normalized)) {
+        merged[merged.length - 1] = `${previous}, ${trimmed}`;
+        continue;
+      }
+
+      merged.push(trimmed);
+    }
+
+    return merged;
+  };
+
   if (commaCount >= 1 && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned)) {
-    return cleaned
-      .replace(/\s+(?:y|e|vs|contra|versus)\s+/gi, ",")
-      .split(",")
-      .map((item) => cleanCityCandidate(item))
-      .filter((item) => item.length > 0);
+    return recombineStateSegments(
+      cleaned
+        .replace(/\s+(?:y|e|vs|contra|versus)\s+/gi, ",")
+        .split(","),
+    );
   }
 
   if (commaCount >= 2) {
-    return cleaned
-      .split(",")
-      .map((item) => cleanCityCandidate(item))
-      .filter((item) => item.length > 0);
+    return recombineStateSegments(cleaned.split(","));
   }
 
   if (separatorPattern.test(cleaned)) {
-    return cleaned
-      .split(separatorPattern)
-      .map((item) => cleanCityCandidate(item))
-      .filter((item) => item.length > 0);
+    return recombineStateSegments(cleaned.split(separatorPattern));
   }
 
   return [cleaned];
