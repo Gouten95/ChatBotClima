@@ -8,6 +8,7 @@ const DEFAULT_OVERLOAD_COOLDOWN_MS = 45 * 1000;
 const DEFAULT_CITY_NAME = "Culiacán, Sinaloa";
 const DEFAULT_CITY_LAT = 24.8069;
 const DEFAULT_CITY_LON = -107.3938;
+const MAX_CITY_CANDIDATES = 5;
 let providerCooldownUntil = 0;
 let cooldownMotivo:
   | "quota_cooldown"
@@ -312,7 +313,7 @@ function getAirQualityRecommendationText(categoria: string | null) {
 }
 
 function hasComparisonIntent(message: string) {
-  return /\b(compar|contra|versus|vs|igual que|mejor que|peor que|comparala|compárala)\b/i.test(message);
+  return /\b(compar|contra|versus|vs|igual que|mejor que|peor que|comparala|compárala|cual ciudad|cuál ciudad|peor clima|mejor clima|peor calidad|mejor calidad)\b/i.test(message);
 }
 
 function normalizeText(value: string) {
@@ -372,7 +373,7 @@ function isLikelyCityCandidate(value: string) {
   }
 
   const words = normalized.split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 5) {
+  if (words.length === 0 || words.length > 8) {
     return false;
   }
 
@@ -405,18 +406,41 @@ function addCandidate(candidates: string[], rawValue: string) {
   candidates.push(aliased);
 }
 
+function splitMultiLocationCandidate(value: string) {
+  const cleaned = cleanCityCandidate(value);
+  const commaCount = (cleaned.match(/,/g) || []).length;
+  const separatorPattern = /\s+(?:vs|contra|versus|y|e|o)\s+/i;
+
+  if (commaCount >= 2) {
+    return cleaned
+      .split(",")
+      .map((item) => cleanCityCandidate(item))
+      .filter((item) => item.length > 0);
+  }
+
+  if (separatorPattern.test(cleaned)) {
+    return cleaned
+      .split(separatorPattern)
+      .map((item) => cleanCityCandidate(item))
+      .filter((item) => item.length > 0);
+  }
+
+  return [cleaned];
+}
+
 function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]): string[] {
   const message = mensajeUsuario.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
   const candidates: string[] = [];
   const patterns = [
-    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad)[^.!?]*\b(?:en|de)\s+([^,.!?]+)/i,
-    /\ben\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
-    /\bde\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
-    /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^,.!?]+)/i,
-    /\bcompar(?:a|ame|áme)?\s+([^,.!?]+?)\s+(?:y|vs|contra)\s+([^,.!?]+)/i,
-    /\bcompar(?:a|ala|ála)?\s+con\s+(?:el\s+clima\s+de\s+)?([^,.!?]+)/i,
-    /\bentre\s+([^,.!?]+?)\s+y\s+([^,.!?]+)/i,
-    /^(?:y|tambien|ahora)\s+([^,.!?]+)$/i,
+    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad|calidad del aire)[^!?]*\b(?:en|de)\s+([^!?]+)/i,
+    /\ben\s+([^!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
+    /\bde\s+([^!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
+    /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^!?]+)/i,
+    /\bcompar(?:a|ame|áme)?\s+([^!?]+?)\s+(?:y|vs|contra)\s+([^!?]+)/i,
+    /\bcompar(?:a|ala|ála)?\s+con\s+(?:el\s+clima\s+de\s+)?([^!?]+)/i,
+    /\bentre\s+([^!?]+?)\s+y\s+([^!?]+)/i,
+    /\b(?:cual|cuál)\s+ciudad[^!?]*\b(?:entre|de)\s+([^!?]+)/i,
+    /^(?:y|tambien|ahora)\s+([^!?]+)$/i,
   ];
 
   for (const pattern of patterns) {
@@ -443,7 +467,7 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
     }
   }
 
-  for (let index = historialUsuario.length - 1; index >= 0 && candidates.length < 2; index -= 1) {
+  for (let index = historialUsuario.length - 1; index >= 0 && candidates.length < MAX_CITY_CANDIDATES; index -= 1) {
       const item = historialUsuario[index];
       if (!item || typeof item !== "object") continue;
       const role = (item as { role?: unknown }).role;
@@ -465,7 +489,7 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
       if (previousCandidates.length > 0) {
         for (const previousCandidate of previousCandidates) {
           addCandidate(candidates, previousCandidate);
-          if (candidates.length >= 2) {
+          if (candidates.length >= MAX_CITY_CANDIDATES) {
             break;
           }
         }
@@ -476,7 +500,39 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
       }
   }
 
-  return candidates.slice(0, 2);
+  return candidates.slice(0, MAX_CITY_CANDIDATES);
+}
+
+async function resolveSingleCityCandidate(cityCandidate: string) {
+  const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
+  const response = await fetch(geocodingUrl);
+
+  if (!response.ok) {
+    throw new Error("No se pudo ubicar la ciudad solicitada por un problema temporal.");
+  }
+
+  const data = (await response.json()) as OpenMeteoGeocodingResponse;
+  const result = data.results?.[0];
+
+  if (
+    !result ||
+    typeof result.latitude !== "number" ||
+    typeof result.longitude !== "number" ||
+    typeof result.name !== "string"
+  ) {
+    throw new Error(`No pude ubicar la ciudad \"${cityCandidate}\". Intenta con un nombre mas especifico.`);
+  }
+
+  const displayName = [result.name, result.admin1, result.country]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(", ");
+
+  return {
+    requestedName: cityCandidate,
+    displayName,
+    latitude: result.latitude,
+    longitude: result.longitude,
+  } satisfies ResolvedCity;
 }
 
 async function resolveRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]) {
@@ -496,54 +552,71 @@ async function resolveRequestedCities(mensajeUsuario: string, historialUsuario: 
     };
   }
 
-  const resolvedCities = await Promise.all(
-    cityCandidates.map(async (cityCandidate: string) => {
-      const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
-      const response = await fetch(geocodingUrl);
+  const resolvedCities: ResolvedCity[] = [];
 
-      if (!response.ok) {
-        throw new Error("No se pudo ubicar la ciudad solicitada por un problema temporal.");
+  for (const rawCandidate of cityCandidates) {
+    const candidateVariants = Array.from(
+      new Set([
+        rawCandidate,
+        rawCandidate.replace(/\s+y\s+/i, ", "),
+      ].map((item) => cleanCityCandidate(item)).filter((item) => item.length > 0)),
+    );
+
+    let resolved = false;
+
+    for (const candidateVariant of candidateVariants) {
+      try {
+        const city = await resolveSingleCityCandidate(candidateVariant);
+        if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
+          resolvedCities.push(city);
+        }
+        resolved = true;
+        break;
+      } catch {
+        continue;
       }
+    }
 
-      const data = (await response.json()) as OpenMeteoGeocodingResponse;
-      const result = data.results?.[0];
+    if (resolved) {
+      continue;
+    }
 
-      if (
-        !result ||
-        typeof result.latitude !== "number" ||
-        typeof result.longitude !== "number" ||
-        typeof result.name !== "string"
-      ) {
-        throw new Error(`No pude ubicar la ciudad \"${cityCandidate}\". Intenta con un nombre mas especifico.`);
+    const splitCandidates = splitMultiLocationCandidate(rawCandidate);
+    if (splitCandidates.length > 1) {
+      for (const splitCandidate of splitCandidates) {
+        try {
+          const city = await resolveSingleCityCandidate(splitCandidate);
+          if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
+            resolvedCities.push(city);
+          }
+        } catch {
+          continue;
+        }
       }
+    }
 
-      const displayName = [result.name, result.admin1, result.country]
-        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-        .join(", ");
-
+    if (resolvedCities.length === 0) {
       return {
-        requestedName: cityCandidate,
-        displayName,
-        latitude: result.latitude,
-        longitude: result.longitude,
-      } satisfies ResolvedCity;
-    }),
-  ).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "No se pudo ubicar la ciudad solicitada.";
+        error: `No pude ubicar la ciudad \"${rawCandidate}\". Intenta con un nombre mas especifico.`,
+        status: 400,
+      };
+    }
 
+    if (resolvedCities.length >= MAX_CITY_CANDIDATES) {
+      break;
+    }
+  }
+
+  if (resolvedCities.length === 0) {
     return {
-      error: message,
-      status: message.includes("problema temporal") ? 503 : 400,
+      error: "No pude ubicar las ciudades solicitadas. Intenta con nombres mas especificos.",
+      status: 400,
     };
-  });
-
-  if (!Array.isArray(resolvedCities)) {
-    return resolvedCities;
   }
 
   return {
-    cities: resolvedCities,
-    requestedCities: cityCandidates,
+    cities: resolvedCities.slice(0, MAX_CITY_CANDIDATES),
+    requestedCities: cityCandidates.slice(0, MAX_CITY_CANDIDATES),
   };
 }
 
