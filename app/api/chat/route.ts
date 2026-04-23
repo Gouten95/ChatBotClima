@@ -1,1052 +1,31 @@
-import OpenAI from "openai";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { NextResponse } from "next/server";
+import OpenAI from 'openai';
+import { NextResponse } from 'next/server';
 
-const DEFAULT_QUOTA_COOLDOWN_MS = 5 * 60 * 1000;
-const DEFAULT_OVERLOAD_COOLDOWN_MS = 45 * 1000;
-const DEFAULT_CITY_NAME = "Culiacán, Sinaloa";
-const DEFAULT_CITY_LAT = 24.8069;
-const DEFAULT_CITY_LON = -107.3938;
-const MAX_CITY_CANDIDATES = 5;
-const KNOWN_STATE_NAMES = new Set([
-  "aguascalientes",
-  "alabama",
-  "alaska",
-  "arizona",
-  "arkansas",
-  "baja california",
-  "baja california sur",
-  "california",
-  "campeche",
-  "colorado",
-  "connecticut",
-  "delaware",
-  "district of columbia",
-  "florida",
-  "chiapas",
-  "chihuahua",
-  "ciudad de mexico",
-  "coahuila",
-  "coahuila de zaragoza",
-  "colima",
-  "georgia",
-  "durango",
-  "estado de mexico",
-  "hawaii",
-  "idaho",
-  "illinois",
-  "indiana",
-  "iowa",
-  "kansas",
-  "kentucky",
-  "louisiana",
-  "maine",
-  "maryland",
-  "massachusetts",
-  "michigan",
-  "minnesota",
-  "mississippi",
-  "missouri",
-  "montana",
-  "guanajuato",
-  "guerrero",
-  "hidalgo",
-  "jalisco",
-  "nebraska",
-  "nevada",
-  "new hampshire",
-  "new jersey",
-  "new mexico",
-  "new york",
-  "north carolina",
-  "north dakota",
-  "michoacan",
-  "michoacan de ocampo",
-  "morelos",
-  "nayarit",
-  "nuevo leon",
-  "ohio",
-  "oklahoma",
-  "oaxaca",
-  "oregon",
-  "pennsylvania",
-  "puebla",
-  "queretaro",
-  "quintana roo",
-  "rhode island",
-  "san luis potosi",
-  "sinaloa",
-  "sonora",
-  "south carolina",
-  "south dakota",
-  "tabasco",
-  "tamaulipas",
-  "tennessee",
-  "texas",
-  "tlaxcala",
-  "utah",
-  "vermont",
-  "veracruz",
-  "veracruz de ignacio de la llave",
-  "virginia",
-  "washington",
-  "west virginia",
-  "wisconsin",
-  "wyoming",
-  "yucatan",
-  "zacatecas",
-  "al",
-  "ak",
-  "az",
-  "ar",
-  "ca",
-  "co",
-  "ct",
-  "dc",
-  "de",
-  "fl",
-  "ga",
-  "hi",
-  "ia",
-  "id",
-  "il",
-  "in",
-  "ks",
-  "ky",
-  "la",
-  "ma",
-  "md",
-  "me",
-  "mi",
-  "mn",
-  "mo",
-  "ms",
-  "mt",
-  "nc",
-  "nd",
-  "ne",
-  "nh",
-  "nj",
-  "nm",
-  "nv",
-  "ny",
-  "oh",
-  "ok",
-  "or",
-  "pa",
-  "ri",
-  "sc",
-  "sd",
-  "tn",
-  "tx",
-  "ut",
-  "va",
-  "vt",
-  "wa",
-  "wi",
-  "wv",
-  "wy",
-  "bc",
-  "bcs",
-  "camp",
-  "cdmx",
-  "chis",
-  "chih",
-  "coah",
-  "col",
-  "dgo",
-  "edomex",
-  "gto",
-  "gro",
-  "hgo",
-  "jal",
-  "mich",
-  "mor",
-  "nay",
-  "nl",
-  "oax",
-  "pue",
-  "qro",
-  "qroo",
-  "slp",
-  "sin",
-  "son",
-  "tab",
-  "tamps",
-  "tlax",
-  "ver",
-  "yuc",
-  "zac",
-]);
+import { DEFAULT_CITY_NAME } from './constants';
+import {
+  buildFallbackResponseBody,
+  DEFAULT_OVERLOAD_COOLDOWN_MS,
+  ensureCompletedWeatherAnswer,
+  getCooldownSecondsRemaining,
+  getOpenAIErrorDebugInfo,
+  getTransientOpenAIErrorKind,
+  parseRetryAfterMs,
+  stringifyLogPayload,
+} from './fallback';
+import { resolveRequestedCities } from './location';
+import { getSystemInstruction, mapHistorialToOpenAIMessages } from './openai';
+import type { ClimaDebug } from './types';
+import { buildCitySummary, fetchWeatherContextForCity } from './weather';
+
 let providerCooldownUntil = 0;
 let cooldownMotivo:
-  | "quota_cooldown"
-  | "service_overloaded_cooldown"
-  | "network_error_cooldown" =
-  "quota_cooldown";
-
-type FallbackMotivo =
-  | "quota_cooldown"
-  | "quota_exceeded"
-  | "service_overloaded"
-  | "service_overloaded_cooldown"
-  | "network_error"
-  | "network_error_cooldown";
-
-type ClimaDebug = {
-  fuente: string;
-  ciudad: string;
-  actualizadoEn: string;
-  temperaturaC: number | null;
-  humedadPct: number | null;
-  precipitacionMm: number | null;
-  calidadAireAqi: number | null;
-  calidadAireCategoria: string | null;
-  pm25: number | null;
-  pm10: number | null;
-  error: string | null;
-};
-
-type DailyWeatherResponse = {
-  time?: string[];
-  temperature_2m_max?: number[];
-  temperature_2m_min?: number[];
-  precipitation_sum?: number[];
-};
-
-type OpenMeteoForecastResponse = {
-  current?: {
-    temperature_2m?: number;
-    relative_humidity_2m?: number;
-    precipitation?: number;
-  };
-  daily?: DailyWeatherResponse;
-};
-
-type OpenMeteoAirQualityResponse = {
-  current?: {
-    european_aqi?: number;
-    us_aqi?: number;
-    pm2_5?: number;
-    pm10?: number;
-    ozone?: number;
-    nitrogen_dioxide?: number;
-  };
-};
-
-type OpenMeteoGeocodingResponse = {
-  results?: Array<{
-    name?: string;
-    admin1?: string;
-    country?: string;
-    latitude?: number;
-    longitude?: number;
-  }>;
-};
-
-type ResolvedCity = {
-  requestedName: string;
-  displayName: string;
-  latitude: number;
-  longitude: number;
-};
-
-type CityWeatherContext = {
-  city: ResolvedCity;
-  climaDebug: ClimaDebug;
-  contexto: string;
-};
-
-type CitySummary = {
-  ciudad: string;
-  temperaturaC: number | null;
-  humedadPct: number | null;
-  precipitacionMm: number | null;
-  calidadAireAqi: number | null;
-  calidadAireCategoria: string | null;
-  pm25: number | null;
-  pm10: number | null;
-  fuente: string;
-};
-
-function buildQuotaFallbackMessage(ciudad: string) {
-  const hora = new Date().toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return `El servicio de OpenAI está al límite en este momento (${hora}), pero no lo dejamos ahi. Para ${ciudad} te recomiendo ropa ligera y transpirable, y llevar una capa ligera por si cambia el viento al atardecer. Si vas a salir, hidratarte y buscar sombra en las horas mas fuertes del sol es la mejor estrategia. En cuanto se normalice el servicio, te doy un pronostico mas fino con todos los detalles.`;
-}
-
-function getCooldownSecondsRemaining() {
-  const ms = providerCooldownUntil - Date.now();
-  if (ms <= 0) return 0;
-  return Math.ceil(ms / 1000);
-}
-
-function parseRetryAfterMs(
-  errorMessage: string,
-  fallbackMs = DEFAULT_QUOTA_COOLDOWN_MS,
-) {
-  const retryInSeconds = errorMessage.match(/retry in\s+([\d.]+)s/i);
-  if (retryInSeconds?.[1]) {
-    return Math.max(1, Math.ceil(Number(retryInSeconds[1]))) * 1000;
-  }
-
-  const retryDelaySeconds = errorMessage.match(/"retryDelay":"(\d+)s"/i);
-  if (retryDelaySeconds?.[1]) {
-    return Math.max(1, Number(retryDelaySeconds[1])) * 1000;
-  }
-
-  return fallbackMs;
-}
-
-function getOpenAIErrorDebugInfo(error: unknown, detalle: string, status: number | null) {
-  const errorRecord =
-    error && typeof error === "object" ? (error as Record<string, unknown>) : null;
-  const cause =
-    errorRecord?.cause && typeof errorRecord.cause === "object"
-      ? (errorRecord.cause as Record<string, unknown>)
-      : null;
-
-  return {
-    name: typeof errorRecord?.name === "string" ? errorRecord.name : null,
-    status,
-    message: detalle,
-    code: typeof errorRecord?.code === "string" ? errorRecord.code : null,
-    type: typeof errorRecord?.type === "string" ? errorRecord.type : null,
-    causeName: typeof cause?.name === "string" ? cause.name : null,
-    causeMessage: typeof cause?.message === "string" ? cause.message : null,
-  };
-}
-
-function stringifyLogPayload(payload: unknown) {
-  try {
-    return JSON.stringify(payload);
-  } catch {
-    return '{"error":"No se pudo serializar el payload del log."}';
-  }
-}
-
-function getTransientOpenAIErrorKind(error: unknown, detalle: string, status: number | null) {
-  const errorName =
-    error && typeof error === "object" && typeof (error as { name?: unknown }).name === "string"
-      ? (error as { name: string }).name
-      : "";
-  const normalizedDetail = detalle.toLowerCase();
-
-  if (
-    normalizedDetail.includes("connection error") ||
-    normalizedDetail.includes("fetch failed") ||
-    normalizedDetail.includes("econnreset") ||
-    normalizedDetail.includes("etimedout") ||
-    normalizedDetail.includes("request timed out") ||
-    errorName === "APIConnectionError" ||
-    errorName === "APIConnectionTimeoutError"
-  ) {
-    return "network_error" satisfies FallbackMotivo;
-  }
-
-  if (
-    status === 503 ||
-    detalle.includes("Service Unavailable") ||
-    detalle.includes("high demand") ||
-    detalle.includes("[503")
-  ) {
-    return "service_overloaded" satisfies FallbackMotivo;
-  }
-
-  return null;
-}
-
-function buildOverloadFallbackMessage(ciudad: string) {
-  const hora = new Date().toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return `En este momento (${hora}) el servicio de OpenAI esta muy saturado y tarda en responder, pero seguimos al pendiente del clima. Para ${ciudad}: ropa ligera, agua a la mano y preferir sombra en horas de sol fuerte. Si sales al atardecer, lleva una capa ligera por cambio de viento. Intenta de nuevo en unos segundos y te doy un pronostico mas detallado.`;
-}
-
-function buildNetworkFallbackMessage(ciudad: string) {
-  const hora = new Date().toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return `A las ${hora} no pudimos conectar con OpenAI por un problema temporal de red, pero seguimos cubriendo el clima con datos alternos. Para ${ciudad}: ropa ligera, hidratarte bien y considerar sombra si sales al mediodia. Si tu plan es por la tarde, una capa ligera sigue siendo buena idea por cambios de viento.`;
-}
-
-function buildFallbackResponseBody(
-  motivo: FallbackMotivo,
-  reintentarEnSegundos: number,
-  climaOpenMeteo: ClimaDebug,
-  resumenCiudades: CitySummary[] = [],
-) {
-  const ciudad = climaOpenMeteo.ciudad || DEFAULT_CITY_NAME;
-  const respuesta =
-    motivo === "quota_cooldown" || motivo === "quota_exceeded"
-      ? buildQuotaFallbackMessage(ciudad)
-      : motivo === "network_error" || motivo === "network_error_cooldown"
-        ? buildNetworkFallbackMessage(ciudad)
-        : buildOverloadFallbackMessage(ciudad);
-
-  return {
-    respuesta,
-    fallback: true,
-    motivo,
-    reintentarEnSegundos,
-    climaOpenMeteo,
-    resumenCiudades,
-  };
-}
-
-function buildCitySummary(weatherContext: CityWeatherContext): CitySummary {
-  return {
-    ciudad: weatherContext.city.displayName,
-    temperaturaC: weatherContext.climaDebug.temperaturaC,
-    humedadPct: weatherContext.climaDebug.humedadPct,
-    precipitacionMm: weatherContext.climaDebug.precipitacionMm,
-    calidadAireAqi: weatherContext.climaDebug.calidadAireAqi,
-    calidadAireCategoria: weatherContext.climaDebug.calidadAireCategoria,
-    pm25: weatherContext.climaDebug.pm25,
-    pm10: weatherContext.climaDebug.pm10,
-    fuente: weatherContext.climaDebug.fuente,
-  };
-}
-
-function formatDailyClimateContext(daily: DailyWeatherResponse | undefined) {
-  if (
-    !daily ||
-    !Array.isArray(daily.time) ||
-    !Array.isArray(daily.temperature_2m_max) ||
-    !Array.isArray(daily.temperature_2m_min) ||
-    !Array.isArray(daily.precipitation_sum)
-  ) {
-    return "No hay resumen diario disponible para dias anteriores o proximos.";
-  }
-
-  const summaries: string[] = [];
-
-  for (let index = 0; index < daily.time.length; index += 1) {
-    const fecha = daily.time[index];
-    const maxima = daily.temperature_2m_max[index];
-    const minima = daily.temperature_2m_min[index];
-    const precipitacion = daily.precipitation_sum[index];
-
-    if (
-      typeof fecha !== "string" ||
-      typeof maxima !== "number" ||
-      typeof minima !== "number" ||
-      typeof precipitacion !== "number"
-    ) {
-      continue;
-    }
-
-    summaries.push(
-      `${fecha}: min ${minima}°C, max ${maxima}°C, precipitacion ${precipitacion}mm`,
-    );
-  }
-
-  return summaries.length > 0
-    ? summaries.join(" | ")
-    : "No hay resumen diario disponible para dias anteriores o proximos.";
-}
-
-function getEuropeanAqiLabel(aqi: number | null) {
-  if (aqi === null) return null;
-  if (aqi <= 20) return "buena";
-  if (aqi <= 40) return "aceptable";
-  if (aqi <= 60) return "moderada";
-  if (aqi <= 80) return "mala";
-  if (aqi <= 100) return "muy mala";
-  return "extremadamente mala";
-}
-
-function getAirQualityRecommendationText(categoria: string | null) {
-  switch (categoria) {
-    case "buena":
-      return "Conviene salir al aire libre con normalidad.";
-    case "aceptable":
-      return "Puedes salir con normalidad, sin una limitacion importante por aire.";
-    case "moderada":
-      return "Conviene salir con precaucion si hay sensibilidad respiratoria.";
-    case "mala":
-      return "Mejor limitar actividad fisica intensa al aire libre.";
-    case "muy mala":
-    case "extremadamente mala":
-      return "Conviene evitar actividades al aire libre y reducir exposicion prolongada.";
-    default:
-      return "No hay recomendacion por calidad del aire disponible.";
-  }
-}
-
-function hasComparisonIntent(message: string) {
-  return /\b(compar|comparalo|compáralo|comparala|compárala|comparalos|compáralos|comparalas|compáralas|contra|versus|vs|igual que|mejor que|peor que|cual ciudad|cuál ciudad|peor clima|mejor clima|peor calidad|mejor calidad)\b/i.test(message);
-}
-
-function normalizeText(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function trimTrailingTimeWords(value: string) {
-  return value
-    .replace(/\s+/g, " ")
-    .replace(/\b(hoy|manana|ayer|ahora|ahorita|actualmente|este momento|esta tarde|esta noche|esta manana|manana en la tarde|manana por la tarde|por la manana|por la tarde|por la noche|el fin de semana|este fin de semana|pasado manana)\b.*$/i, "")
-    .replace(/^[\s,.-]+|[\s,.-]+$/g, "")
-    .trim();
-}
-
-function normalizeCityAlias(value: string) {
-  const normalized = normalizeText(value);
-  const aliases: Record<string, string> = {
-    cdmx: "Ciudad de Mexico",
-    "ciudad de mexico": "Ciudad de Mexico",
-    "mexico city": "Ciudad de Mexico",
-    df: "Ciudad de Mexico",
-    "edo mex": "Estado de Mexico",
-    edomex: "Estado de Mexico",
-    bc: "Baja California",
-    bcs: "Baja California Sur",
-    camp: "Campeche",
-    chis: "Chiapas",
-    chih: "Chihuahua",
-    coah: "Coahuila",
-    col: "Colima",
-    dgo: "Durango",
-    gto: "Guanajuato",
-    gro: "Guerrero",
-    hgo: "Hidalgo",
-    jal: "Jalisco",
-    mich: "Michoacan",
-    mor: "Morelos",
-    nay: "Nayarit",
-    nl: "Nuevo Leon",
-    oax: "Oaxaca",
-    pue: "Puebla",
-    qro: "Queretaro",
-    qroo: "Quintana Roo",
-    slp: "San Luis Potosi",
-    sin: "Sinaloa",
-    son: "Sonora",
-    tab: "Tabasco",
-    tamps: "Tamaulipas",
-    tlax: "Tlaxcala",
-    ver: "Veracruz",
-    yuc: "Yucatan",
-    zac: "Zacatecas",
-    ca: "California",
-    tx: "Texas",
-    ny: "New York",
-    fl: "Florida",
-    wa: "Washington",
-    il: "Illinois",
-    az: "Arizona",
-    co: "Colorado",
-    nj: "New Jersey",
-    pa: "Pennsylvania",
-    ga: "Georgia",
-    nc: "North Carolina",
-    sc: "South Carolina",
-    va: "Virginia",
-    dc: "District of Columbia",
-  };
-
-  return aliases[normalized] ?? value.trim();
-}
-
-function isLikelyCityCandidate(value: string) {
-  const normalized = normalizeText(value);
-  const blockedTerms = new Set([
-    "salir",
-    "ropa",
-    "parque",
-    "hoy",
-    "manana",
-    "ayer",
-    "ahora",
-    "ahorita",
-    "actualmente",
-    "clima",
-    "tiempo",
-    "pronostico",
-    "temperatura",
-    "lluvia",
-    "humedad",
-    "fin de semana",
-    "esta tarde",
-    "esta noche",
-    "esta manana",
-  ]);
-
-  if (!normalized || blockedTerms.has(normalized)) {
-    return false;
-  }
-
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 8) {
-    return false;
-  }
-
-  const invalidWordCount = words.filter((word) => blockedTerms.has(word)).length;
-  return invalidWordCount < words.length;
-}
-
-function cleanCityCandidate(value: string) {
-  return trimTrailingTimeWords(value)
-    .replace(/^(la ciudad de|ciudad de|el clima de|clima de|el tiempo de|tiempo de)\s+/i, "")
-    .replace(/^(voy a viajar a|viajo a|viajar a|me voy a|ire a|ir a|hacia)\s+/i, "")
-    .replace(/^(y|tambien|ahora|comparame|compárame|compara|contra|vs)\s+/i, "")
-    .replace(/[()]/g, "")
-    .trim();
-}
-
-function addCandidate(candidates: string[], rawValue: string) {
-  const cleaned = cleanCityCandidate(rawValue);
-  const aliased = normalizeCityAlias(cleaned);
-
-  if (!aliased || aliased.length < 2 || !isLikelyCityCandidate(aliased)) {
-    return;
-  }
-
-  const normalized = normalizeText(aliased);
-  if (candidates.some((item) => normalizeText(item) === normalized)) {
-    return;
-  }
-
-  candidates.push(aliased);
-}
-
-function splitMultiLocationCandidate(value: string) {
-  const cleaned = cleanCityCandidate(value);
-  const commaCount = (cleaned.match(/,/g) || []).length;
-  const separatorPattern = /\s+(?:vs|contra|versus|y|e|o)\s+/i;
-
-  const recombineStateSegments = (segments: string[]) => {
-    const merged: string[] = [];
-
-    for (const segment of segments) {
-      const trimmed = cleanCityCandidate(segment);
-      if (!trimmed) continue;
-
-      const normalized = normalizeText(trimmed);
-      const previous = merged[merged.length - 1];
-
-      if (previous && KNOWN_STATE_NAMES.has(normalized)) {
-        merged[merged.length - 1] = `${previous}, ${trimmed}`;
-        continue;
-      }
-
-      merged.push(trimmed);
-    }
-
-    return merged;
-  };
-
-  if (commaCount >= 1 && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned)) {
-    return recombineStateSegments(
-      cleaned
-        .replace(/\s+(?:y|e|vs|contra|versus)\s+/gi, ",")
-        .split(","),
-    );
-  }
-
-  if (commaCount >= 2) {
-    return recombineStateSegments(cleaned.split(","));
-  }
-
-  if (separatorPattern.test(cleaned)) {
-    return recombineStateSegments(cleaned.split(separatorPattern));
-  }
-
-  return [cleaned];
-}
-
-function isLikelyLocationList(value: string, message: string) {
-  const cleaned = cleanCityCandidate(value);
-  const commaCount = (cleaned.match(/,/g) || []).length;
-
-  if (commaCount >= 2) {
-    return true;
-  }
-
-  if (commaCount >= 1 && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned)) {
-    return true;
-  }
-
-  return hasComparisonIntent(message) && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned);
-}
-
-function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]): string[] {
-  const message = mensajeUsuario.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
-  const candidates: string[] = [];
-  const patterns = [
-    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad|calidad del aire)[^!?]*\b(?:en|de)\s+([^!?]+)/i,
-    /\ben\s+([^!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
-    /\bde\s+([^!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
-    /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^!?]+)/i,
-    /\bcompar(?:a|ame|áme)?\s+([^!?]+?)\s+(?:y|vs|contra)\s+([^!?]+)/i,
-    /\bcompar[a-záéíóúñ]*\s+con\s+(?:el\s+clima\s+de\s+)?([^!?]+)/i,
-    /\bentre\s+([^!?]+?)\s+y\s+([^!?]+)/i,
-    /\b(?:cual|cuál)\s+ciudad[^!?]*\b(?:entre|de)\s+([^!?]+)/i,
-    /^(?:y|tambien|ahora)\s+([^!?]+)$/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = message.match(pattern);
-    if (!match) continue;
-
-    for (const candidate of match.slice(1)) {
-      if (typeof candidate === "string") {
-        const splitCandidates = isLikelyLocationList(candidate, message)
-          ? splitMultiLocationCandidate(candidate)
-          : [candidate];
-
-        for (const splitCandidate of splitCandidates) {
-          addCandidate(candidates, splitCandidate);
-        }
-      }
-    }
-  }
-
-  const compactCompare = message.match(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ.\s]+?)\s+(?:vs|contra)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ.\s]+)\b/i);
-  if (compactCompare) {
-    addCandidate(candidates, compactCompare[1]);
-    addCandidate(candidates, compactCompare[2]);
-  }
-
-  if (candidates.length === 0) {
-    const shortFollowUp = message.match(/^(?:y|tambien|ahora)\s+en\s+([^,.!?]+)$/i);
-    if (shortFollowUp?.[1]) {
-      addCandidate(candidates, shortFollowUp[1]);
-    }
-  }
-
-  for (let index = historialUsuario.length - 1; index >= 0 && candidates.length < MAX_CITY_CANDIDATES; index -= 1) {
-      const item = historialUsuario[index];
-      if (!item || typeof item !== "object") continue;
-      const role = (item as { role?: unknown }).role;
-      const parts = (item as { parts?: unknown }).parts;
-      if (role !== "user" || !Array.isArray(parts)) continue;
-
-      const previousText = parts
-        .map((part) =>
-          part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-            ? (part as { text: string }).text
-            : "",
-        )
-        .join(" ")
-        .trim();
-
-      if (!previousText) continue;
-
-      const previousCandidates = extractRequestedCities(previousText, []);
-      if (previousCandidates.length > 0) {
-        for (const previousCandidate of previousCandidates) {
-          addCandidate(candidates, previousCandidate);
-          if (candidates.length >= MAX_CITY_CANDIDATES) {
-            break;
-          }
-        }
-
-        if (candidates.length > 0 && !hasComparisonIntent(message)) {
-          break;
-        }
-      }
-  }
-
-  return candidates.slice(0, MAX_CITY_CANDIDATES);
-}
-
-async function resolveSingleCityCandidate(cityCandidate: string) {
-  const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
-  const response = await fetch(geocodingUrl);
-
-  if (!response.ok) {
-    throw new Error("No se pudo ubicar la ciudad solicitada por un problema temporal.");
-  }
-
-  const data = (await response.json()) as OpenMeteoGeocodingResponse;
-  const result = data.results?.[0];
-
-  if (
-    !result ||
-    typeof result.latitude !== "number" ||
-    typeof result.longitude !== "number" ||
-    typeof result.name !== "string"
-  ) {
-    throw new Error(`No pude ubicar la ciudad \"${cityCandidate}\". Intenta con un nombre mas especifico.`);
-  }
-
-  const displayName = [result.name, result.admin1, result.country]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join(", ");
-
-  return {
-    requestedName: cityCandidate,
-    displayName,
-    latitude: result.latitude,
-    longitude: result.longitude,
-  } satisfies ResolvedCity;
-}
-
-async function resolveRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]) {
-  const cityCandidates = extractRequestedCities(mensajeUsuario, historialUsuario);
-
-  if (cityCandidates.length === 0) {
-    return {
-      cities: [
-        {
-          requestedName: DEFAULT_CITY_NAME,
-          displayName: DEFAULT_CITY_NAME,
-          latitude: DEFAULT_CITY_LAT,
-          longitude: DEFAULT_CITY_LON,
-        } satisfies ResolvedCity,
-      ],
-      requestedCities: [],
-    };
-  }
-
-  const resolvedCities: ResolvedCity[] = [];
-
-  for (const rawCandidate of cityCandidates) {
-    if (isLikelyLocationList(rawCandidate, mensajeUsuario)) {
-      const splitCandidates = splitMultiLocationCandidate(rawCandidate);
-
-      for (const splitCandidate of splitCandidates) {
-        try {
-          const city = await resolveSingleCityCandidate(splitCandidate);
-          if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
-            resolvedCities.push(city);
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      if (resolvedCities.length > 0) {
-        if (resolvedCities.length >= MAX_CITY_CANDIDATES) {
-          break;
-        }
-
-        continue;
-      }
-    }
-
-    const candidateVariants = Array.from(
-      new Set([
-        rawCandidate,
-        rawCandidate.replace(/\s+y\s+/i, ", "),
-      ].map((item) => cleanCityCandidate(item)).filter((item) => item.length > 0)),
-    );
-
-    let resolved = false;
-
-    for (const candidateVariant of candidateVariants) {
-      try {
-        const city = await resolveSingleCityCandidate(candidateVariant);
-        if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
-          resolvedCities.push(city);
-        }
-        resolved = true;
-        break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (resolved) {
-      continue;
-    }
-
-    const splitCandidates = splitMultiLocationCandidate(rawCandidate);
-    if (splitCandidates.length > 1) {
-      for (const splitCandidate of splitCandidates) {
-        try {
-          const city = await resolveSingleCityCandidate(splitCandidate);
-          if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
-            resolvedCities.push(city);
-          }
-        } catch {
-          continue;
-        }
-      }
-    }
-
-    if (resolvedCities.length === 0) {
-      return {
-        error: `No pude ubicar la ciudad \"${rawCandidate}\". Intenta con un nombre mas especifico.`,
-        status: 400,
-      };
-    }
-
-    if (resolvedCities.length >= MAX_CITY_CANDIDATES) {
-      break;
-    }
-  }
-
-  if (resolvedCities.length === 0) {
-    return {
-      error: "No pude ubicar las ciudades solicitadas. Intenta con nombres mas especificos.",
-      status: 400,
-    };
-  }
-
-  return {
-    cities: resolvedCities.slice(0, MAX_CITY_CANDIDATES),
-    requestedCities: cityCandidates.slice(0, MAX_CITY_CANDIDATES),
-  };
-}
-
-async function fetchWeatherContextForCity(city: ResolvedCity, fechaYHoraActual: string) {
-  let climaDebug: ClimaDebug = {
-    fuente: "open-meteo-fallback",
-    ciudad: city.displayName,
-    actualizadoEn: fechaYHoraActual,
-    temperaturaC: null,
-    humedadPct: null,
-    precipitacionMm: null,
-    calidadAireAqi: null,
-    calidadAireCategoria: null,
-    pm25: null,
-    pm10: null,
-    error: null,
-  };
-
-  let contexto = `No hubo datos meteorologicos suficientes para ${city.displayName}.`;
-
-  try {
-    const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}&longitude=${city.longitude}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
-    const urlCalidadAire = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${city.latitude}&longitude=${city.longitude}&current=european_aqi,us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide&timezone=auto`;
-    const [respuestaClima, respuestaCalidadAire] = await Promise.all([
-      fetch(urlClima),
-      fetch(urlCalidadAire),
-    ]);
-
-    if (!respuestaClima.ok) {
-      climaDebug = {
-        ...climaDebug,
-        fuente: "open-meteo-http-error",
-        error: `HTTP ${respuestaClima.status}`,
-      };
-
-      return { city, climaDebug, contexto } satisfies CityWeatherContext;
-    }
-
-    const datosReales = (await respuestaClima.json()) as OpenMeteoForecastResponse;
-    const temp = datosReales.current?.temperature_2m;
-    const humedad = datosReales.current?.relative_humidity_2m;
-    const lluvia = datosReales.current?.precipitation;
-    const dailyContext = formatDailyClimateContext(datosReales.daily);
-    let calidadAireContext = "Calidad del aire no disponible.";
-    let aqiEuropeo: number | null = null;
-    let pm25: number | null = null;
-    let pm10: number | null = null;
-
-    if (respuestaCalidadAire.ok) {
-      const airQuality = (await respuestaCalidadAire.json()) as OpenMeteoAirQualityResponse;
-      aqiEuropeo = typeof airQuality.current?.european_aqi === "number" ? airQuality.current.european_aqi : null;
-      pm25 = typeof airQuality.current?.pm2_5 === "number" ? airQuality.current.pm2_5 : null;
-      pm10 = typeof airQuality.current?.pm10 === "number" ? airQuality.current.pm10 : null;
-      const categoriaAire = getEuropeanAqiLabel(aqiEuropeo);
-      const recomendacionAire = getAirQualityRecommendationText(categoriaAire);
-
-      calidadAireContext = categoriaAire
-        ? `Calidad del aire actual: AQI europeo ${aqiEuropeo} (${categoriaAire}), PM2.5 ${pm25 ?? "sin dato"} µg/m3, PM10 ${pm10 ?? "sin dato"} µg/m3. Recomendacion por aire: ${recomendacionAire}`
-        : "Calidad del aire no disponible.";
-
-      climaDebug = {
-        ...climaDebug,
-        calidadAireAqi: aqiEuropeo,
-        calidadAireCategoria: categoriaAire,
-        pm25,
-        pm10,
-      };
-    }
-
-    contexto = `${city.displayName}. Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. ${calidadAireContext} Resumen diario reciente y proximo: ${dailyContext}.`;
-    climaDebug = {
-      ...climaDebug,
-      fuente: "open-meteo",
-      ciudad: city.displayName,
-      actualizadoEn: fechaYHoraActual,
-      temperaturaC: typeof temp === "number" ? temp : null,
-      humedadPct: typeof humedad === "number" ? humedad : null,
-      precipitacionMm: typeof lluvia === "number" ? lluvia : null,
-      error: null,
-    };
-  } catch (errorClima) {
-    console.warn(
-      `No se pudo obtener el clima real para ${city.displayName}, usando fallback.`,
-      errorClima,
-    );
-    climaDebug = {
-      ...climaDebug,
-      fuente: "open-meteo-error",
-      error: errorClima instanceof Error ? errorClima.message : "Error desconocido",
-    };
-  }
-
-  return { city, climaDebug, contexto } satisfies CityWeatherContext;
-}
-
-function mapHistorialToOpenAIMessages(historialUsuario: unknown[]) {
-  const mensajes: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-
-  for (const item of historialUsuario) {
-    if (!item || typeof item !== "object") continue;
-    const roleRaw = (item as { role?: unknown }).role;
-    const partsRaw = (item as { parts?: unknown }).parts;
-    if (!Array.isArray(partsRaw)) continue;
-
-    const text = partsRaw
-      .map((part) =>
-        part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-          ? (part as { text: string }).text
-          : "",
-      )
-      .join("\n")
-      .trim();
-
-    if (!text) continue;
-
-    if (roleRaw === "user") {
-      mensajes.push({ role: "user", content: text });
-    } else if (roleRaw === "model") {
-      mensajes.push({ role: "assistant", content: text });
-    }
-  }
-
-  return mensajes;
-}
-
-async function getSystemInstruction() {
-  const promptPath = path.join(
-    process.cwd(),
-    "prompts",
-    "system-instruction.txt",
-  );
-
-  try {
-    const content = await readFile(promptPath, "utf-8");
-    const trimmed = content.trim();
-    if (!trimmed) {
-      throw new Error("El archivo de prompt está vacío.");
-    }
-    return trimmed;
-  } catch (error) {
-    console.warn("No se pudo leer prompts/system-instruction.txt", error);
-    return "Actúa como asistente del clima. Responde únicamente sobre clima, con recomendaciones de ropa, salida y actividad al aire libre.";
-  }
-}
+  | 'quota_cooldown'
+  | 'service_overloaded_cooldown'
+  | 'network_error_cooldown' = 'quota_cooldown';
 
 export async function POST(request: Request) {
   let climaDebug: ClimaDebug = {
-    fuente: "no-consultado",
+    fuente: 'no-consultado',
     ciudad: DEFAULT_CITY_NAME,
     actualizadoEn: new Date().toLocaleString(),
     temperaturaC: null,
@@ -1063,20 +42,19 @@ export async function POST(request: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Falta configurar OPENAI_API_KEY en .env.local" },
+        { error: 'Falta configurar OPENAI_API_KEY en .env.local' },
         { status: 500 },
       );
     }
-    const modelName = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-    // Recibimos el mensaje Y el historial
+    const modelName = process.env.OPENAI_MODEL || 'gpt-4o-mini';
     const body = await request.json();
     const mensajeUsuario = body?.mensaje;
     const historialUsuario = Array.isArray(body?.historial) ? body.historial : [];
 
     if (typeof mensajeUsuario !== "string" || !mensajeUsuario.trim()) {
       return NextResponse.json(
-        { error: "El mensaje no puede ir vacío." },
+        { error: 'El mensaje no puede ir vacío.' },
         { status: 400 },
       );
     }
@@ -1091,8 +69,6 @@ export async function POST(request: Request) {
 
     const openai = new OpenAI({ apiKey });
     const systemInstruction = await getSystemInstruction();
-
-    // --- INICIO DE LA LLAMADA A LA API REAL ---
     const fechaYHoraActual = new Date().toLocaleString();
     const weatherContexts = await Promise.all(
       cityResolution.cities.map((city) => fetchWeatherContextForCity(city, fechaYHoraActual)),
@@ -1104,10 +80,8 @@ export async function POST(request: Request) {
       ...weatherContexts[0].climaDebug,
       ciudad: ciudadesConsultadas,
     };
-    // --- FIN DE LA LLAMADA A LA API REAL ---
 
-    // Si ya sabemos que la cuota está agotada, evitamos pegarle a OpenAI de nuevo.
-    const cooldownSeconds = getCooldownSecondsRemaining();
+    const cooldownSeconds = getCooldownSecondsRemaining(providerCooldownUntil);
     if (cooldownSeconds > 0) {
       return NextResponse.json(
         buildFallbackResponseBody(cooldownMotivo, cooldownSeconds, climaDebug, resumenCiudades),
@@ -1115,38 +89,38 @@ export async function POST(request: Request) {
       );
     }
 
-    // Inyectamos contexto secretamente
-    const contextoSistema = `Hoy es ${fechaYHoraActual}. Ciudades consultadas: ${ciudadesConsultadas}. Usa unicamente estos datos meteorologicos verificados: ${datosDelClimaAPI}. Puedes responder sobre clima actual, pasado cercano y futuro cercano solo si aparece en estos datos. Si hay varias ciudades, puedes compararlas de forma directa. Si te preguntan por una fecha, ciudad o periodo que no este respaldado por estos datos, dilo con claridad y no inventes. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendacion final.`;
+    const contextoSistema = `Hoy es ${fechaYHoraActual}. Ciudades consultadas: ${ciudadesConsultadas}. Usa unicamente estos datos meteorologicos verificados: ${datosDelClimaAPI}. Puedes responder sobre clima actual, pasado cercano y futuro cercano solo si aparece en estos datos. Si hay varias ciudades, solo comparalas o ordénalas cuando el usuario lo pida de forma explicita. Si no lo pide, responde unicamente a la ciudad o solicitud principal sin comparar por iniciativa propia. Si te preguntan por una fecha, ciudad o periodo que no este respaldado por estos datos, dilo con claridad y no inventes. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendacion final.`;
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: systemInstruction },
-      { role: "system", content: contextoSistema },
+      { role: 'system', content: systemInstruction },
+      { role: 'system', content: contextoSistema },
       ...mapHistorialToOpenAIMessages(historialUsuario),
-      { role: "user", content: mensajeUsuario },
+      { role: 'user', content: mensajeUsuario },
     ];
 
     const completion = await openai.chat.completions.create({
       model: modelName,
       messages,
       temperature: 0.3,
-      max_completion_tokens: 500,
+      max_completion_tokens: 900,
     });
 
-    let respuestaIA = completion.choices?.[0]?.message?.content?.trim() || "";
+    let respuestaIA = completion.choices?.[0]?.message?.content?.trim() || '';
     if (!respuestaIA) {
       respuestaIA = `Con los datos actuales en ${ciudadesConsultadas}, te recomiendo ropa ligera, hidratarte y evitar exposición prolongada al sol en horas de mayor intensidad.`;
     }
+    respuestaIA = ensureCompletedWeatherAnswer(respuestaIA, ciudadesConsultadas);
 
     return NextResponse.json({
       respuesta: respuestaIA,
-      provider: "openai",
+      provider: 'openai',
       resumenCiudades,
     });
   } catch (error) {
     const detalle =
-      error instanceof Error ? error.message : "Error desconocido";
+      error instanceof Error ? error.message : 'Error desconocido';
     const status =
-      error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number"
+      error && typeof error === 'object' && typeof (error as { status?: unknown }).status === 'number'
         ? (error as { status: number }).status
         : null;
     const errorDebug = getOpenAIErrorDebugInfo(error, detalle, status);
@@ -1155,14 +129,14 @@ export async function POST(request: Request) {
 
     if (
       status === 429 ||
-      detalle.includes("Too Many Requests") ||
-      detalle.includes("Quota exceeded") ||
-      detalle.includes("insufficient_quota") ||
-      detalle.toLowerCase().includes("rate limit")
+      detalle.includes('Too Many Requests') ||
+      detalle.includes('Quota exceeded') ||
+      detalle.includes('insufficient_quota') ||
+      detalle.toLowerCase().includes('rate limit')
     ) {
       const cooldownMs = parseRetryAfterMs(detalle);
       providerCooldownUntil = Date.now() + cooldownMs;
-      cooldownMotivo = "quota_cooldown";
+      cooldownMotivo = 'quota_cooldown';
       console.info(
         `Fallback por cuota en OpenAI: ${stringifyLogPayload({
           error: errorDebug,
@@ -1171,7 +145,7 @@ export async function POST(request: Request) {
       );
       return NextResponse.json(
         buildFallbackResponseBody(
-          "quota_exceeded",
+          'quota_exceeded',
           Math.ceil(cooldownMs / 1000),
           climaDebug,
           [],
@@ -1185,9 +159,9 @@ export async function POST(request: Request) {
       const cooldownMs = parseRetryAfterMs(detalle, DEFAULT_OVERLOAD_COOLDOWN_MS);
       providerCooldownUntil = Date.now() + cooldownMs;
       cooldownMotivo =
-        transientKind === "network_error"
-          ? "network_error_cooldown"
-          : "service_overloaded_cooldown";
+        transientKind === 'network_error'
+          ? 'network_error_cooldown'
+          : 'service_overloaded_cooldown';
       console.info(
         `Fallback transitorio de OpenAI: ${stringifyLogPayload({
           motivo: transientKind,
@@ -1205,18 +179,20 @@ export async function POST(request: Request) {
         { status: 200 },
       );
     }
-    if (status === 401 || detalle.toLowerCase().includes("invalid api key")) {
+
+    if (status === 401 || detalle.toLowerCase().includes('invalid api key')) {
       return NextResponse.json(
         {
-          error: "La API key de OpenAI no es válida.",
+          error: 'La API key de OpenAI no es válida.',
         },
         { status: 401 },
       );
     }
-    if (status === 404 && detalle.toLowerCase().includes("model")) {
+
+    if (status === 404 && detalle.toLowerCase().includes('model')) {
       return NextResponse.json(
         {
-          error: "El modelo de OpenAI configurado no está disponible para tu cuenta.",
+          error: 'El modelo de OpenAI configurado no está disponible para tu cuenta.',
         },
         { status: 400 },
       );

@@ -1,306 +1,130 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-
-type ResumenCiudad = {
-  ciudad: string;
-  temperaturaC: number | null;
-  humedadPct: number | null;
-  precipitacionMm: number | null;
-  calidadAireAqi: number | null;
-  calidadAireCategoria: string | null;
-  pm25: number | null;
-  pm10: number | null;
-  fuente: string;
-};
-
-type MensajeHistorial = {
-  role: 'user' | 'model';
-  parts: { text: string }[];
-  origen?: 'openai' | 'fallback_cuota' | 'fallback_red' | 'fallback_saturacion';
-  resumenCiudades?: ResumenCiudad[];
-};
-
-type FallbackInfo = {
-  texto: string;
-  tono: string;
-  borde: string;
-};
-
-function getFallbackInfo(data: {
-  motivo?: string;
-  reintentarEnSegundos?: number;
-}): FallbackInfo {
-  if (
-    data?.motivo === 'quota_cooldown' &&
-    typeof data?.reintentarEnSegundos === 'number'
-  ) {
-    return {
-      texto: `OpenAI sin cuota temporalmente. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
-      tono: 'text-amber-950 bg-amber-100',
-      borde: 'border-amber-300',
-    };
-  }
-
-  if (data?.motivo === 'quota_exceeded') {
-    return {
-      texto: 'OpenAI sin cuota temporalmente. Mostrando respuesta de respaldo.',
-      tono: 'text-amber-950 bg-amber-100',
-      borde: 'border-amber-300',
-    };
-  }
-
-  if (
-    (data?.motivo === 'network_error' || data?.motivo === 'network_error_cooldown') &&
-    typeof data?.reintentarEnSegundos === 'number'
-  ) {
-    return {
-      texto: `No hubo conexión estable con OpenAI. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
-      tono: 'text-sky-950 bg-sky-100',
-      borde: 'border-sky-300',
-    };
-  }
-
-  if (data?.motivo === 'network_error' || data?.motivo === 'network_error_cooldown') {
-    return {
-      texto: 'No hubo conexión estable con OpenAI. Mostrando respuesta con respaldo temporal.',
-      tono: 'text-sky-950 bg-sky-100',
-      borde: 'border-sky-300',
-    };
-  }
-
-  if (
-    (data?.motivo === 'service_overloaded' || data?.motivo === 'service_overloaded_cooldown') &&
-    typeof data?.reintentarEnSegundos === 'number'
-  ) {
-    return {
-      texto: `OpenAI con alta demanda en este momento. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
-      tono: 'text-orange-950 bg-orange-100',
-      borde: 'border-orange-300',
-    };
-  }
-
-  if (data?.motivo === 'service_overloaded' || data?.motivo === 'service_overloaded_cooldown') {
-    return {
-      texto: 'OpenAI con alta demanda en este momento. Mostrando respuesta de respaldo.',
-      tono: 'text-orange-950 bg-orange-100',
-      borde: 'border-orange-300',
-    };
-  }
-
-  return {
-    texto: 'Respuesta de respaldo temporal activa.',
-    tono: 'text-gray-900 bg-gray-100',
-    borde: 'border-gray-300',
-  };
-}
-
-function getOrigenMensaje(motivo?: string): MensajeHistorial['origen'] {
-  if (motivo === 'quota_cooldown' || motivo === 'quota_exceeded') {
-    return 'fallback_cuota';
-  }
-
-  if (motivo === 'network_error' || motivo === 'network_error_cooldown') {
-    return 'fallback_red';
-  }
-
-  if (motivo === 'service_overloaded' || motivo === 'service_overloaded_cooldown') {
-    return 'fallback_saturacion';
-  }
-
-  return 'openai';
-}
-
-function getAirQualityVisual(categoria: string | null) {
-  switch (categoria) {
-    case 'buena':
-      return { icono: '🍃', clases: 'bg-emerald-100 text-emerald-900 border-emerald-300' };
-    case 'aceptable':
-      return { icono: '🌿', clases: 'bg-lime-100 text-lime-900 border-lime-300' };
-    case 'moderada':
-      return { icono: '🌤️', clases: 'bg-amber-100 text-amber-900 border-amber-300' };
-    case 'mala':
-      return { icono: '😷', clases: 'bg-orange-100 text-orange-900 border-orange-300' };
-    case 'muy mala':
-    case 'extremadamente mala':
-      return { icono: '🚨', clases: 'bg-red-100 text-red-900 border-red-300' };
-    default:
-      return { icono: '🌫️', clases: 'bg-gray-100 text-gray-900 border-gray-300' };
-  }
-}
-
-function getAirQualityRecommendation(categoria: string | null) {
-  switch (categoria) {
-    case 'buena':
-      return {
-        texto: 'Conviene salir al aire libre.',
-        clases: 'bg-emerald-50 text-emerald-900 border-emerald-200',
-      };
-    case 'aceptable':
-      return {
-        texto: 'Puedes salir con normalidad.',
-        clases: 'bg-lime-50 text-lime-900 border-lime-200',
-      };
-    case 'moderada':
-      return {
-        texto: 'Sal con precaución si eres sensible al aire.',
-        clases: 'bg-amber-50 text-amber-900 border-amber-200',
-      };
-    case 'mala':
-      return {
-        texto: 'Mejor limita actividad intensa al aire libre.',
-        clases: 'bg-orange-50 text-orange-900 border-orange-200',
-      };
-    case 'muy mala':
-    case 'extremadamente mala':
-      return {
-        texto: 'Conviene evitar actividades al aire libre.',
-        clases: 'bg-red-50 text-red-900 border-red-200',
-      };
-    default:
-      return {
-        texto: 'Sin recomendación de aire disponible.',
-        clases: 'bg-gray-50 text-gray-900 border-gray-200',
-      };
-  }
-}
-
-function getAirQualitySeverity(categoria: string | null) {
-  switch (categoria) {
-    case 'extremadamente mala':
-      return 5;
-    case 'muy mala':
-      return 4;
-    case 'mala':
-      return 3;
-    case 'moderada':
-      return 2;
-    case 'aceptable':
-      return 1;
-    case 'buena':
-      return 0;
-    default:
-      return -1;
-  }
-}
-
-function getMessageAirTone(resumenCiudades?: ResumenCiudad[]) {
-  const worstCategory = (resumenCiudades ?? []).reduce<string | null>((currentWorst, item) => {
-    if (getAirQualitySeverity(item.calidadAireCategoria) > getAirQualitySeverity(currentWorst)) {
-      return item.calidadAireCategoria;
-    }
-
-    return currentWorst;
-  }, null);
-
-  switch (worstCategory) {
-    default:
-      return {
-        caja: 'bg-white border-gray-200 shadow',
-        markdown: 'text-black',
-      };
-  }
-}
-
-function formatMetric(value: number | null, suffix: string) {
-  return value === null ? 'Sin dato' : `${value}${suffix}`;
-}
-
-function getSummaryGridClass(resumenCiudades?: ResumenCiudad[]) {
-  const total = resumenCiudades?.length ?? 0;
-
-  if (total <= 1) {
-    return 'grid-cols-1';
-  }
-
-  return 'grid-cols-1 md:grid-cols-2';
-}
-
-function getMessageWidthClass(msg: MensajeHistorial) {
-  if (msg.role === 'user') {
-    return 'max-w-[85%]';
-  }
-
-  const total = msg.resumenCiudades?.length ?? 0;
-
-  if (total <= 1) {
-    return 'w-full max-w-[90%]';
-  }
-
-  if (total === 2) {
-    return 'w-full max-w-[96%]';
-  }
-
-  return 'w-full max-w-full';
-}
-
-function getSummaryCardSpanClass(index: number, resumenCiudades?: ResumenCiudad[]) {
-  const total = resumenCiudades?.length ?? 0;
-
-  if (total > 1 && total % 2 !== 0 && index === total - 1) {
-    return 'md:col-span-2';
-  }
-
-  return '';
-}
-
-function getClimateSeverityScore(resumen: ResumenCiudad) {
-  const temperatura = resumen.temperaturaC ?? 0;
-  const precipitacion = resumen.precipitacionMm ?? 0;
-  const humedad = resumen.humedadPct ?? 0;
-
-  const calor = temperatura > 32 ? (temperatura - 32) * 3 : 0;
-  const frio = temperatura < 10 ? (10 - temperatura) * 2 : 0;
-  const lluvia = precipitacion * 4;
-  const bochorno = temperatura >= 28 && humedad >= 65 ? 6 : 0;
-
-  return calor + frio + lluvia + bochorno;
-}
-
-function getWorstAirRanking(resumenCiudades: ResumenCiudad[]) {
-  return [...resumenCiudades].sort((left, right) => {
-    const leftAqi = left.calidadAireAqi ?? -1;
-    const rightAqi = right.calidadAireAqi ?? -1;
-    return rightAqi - leftAqi;
-  });
-}
-
-function getWorstClimateRanking(resumenCiudades: ResumenCiudad[]) {
-  return [...resumenCiudades].sort((left, right) => {
-    return getClimateSeverityScore(right) - getClimateSeverityScore(left);
-  });
-}
-
-function getRankingMedal(index: number) {
-  switch (index) {
-    case 0:
-      return '🥇';
-    case 1:
-      return '🥈';
-    case 2:
-      return '🥉';
-    default:
-      return '•';
-  }
-}
+import { ChatMessage } from '@/components/chat/ChatMessage';
+import { ChatSidebar } from '@/components/chat/ChatSidebar';
+import type { ConversacionChat, FallbackInfo, MensajeHistorial } from '@/lib/chat-types';
+import {
+  buildConversationTitle,
+  CHAT_STORAGE_KEY,
+  createConversation,
+  DEFAULT_CHAT_TITLE,
+  getFallbackInfo,
+  getOrigenMensaje,
+  moveConversationToTop,
+} from '@/lib/chat-ui';
 
 export default function Home() {
   const [mensaje, setMensaje] = useState('');
-  const [historial, setHistorial] = useState<MensajeHistorial[]>([]);
+  const [conversaciones, setConversaciones] = useState<ConversacionChat[]>([]);
+  const [activeChatId, setActiveChatId] = useState('');
   const [cargando, setCargando] = useState(false);
-  const [errorCritico, setErrorCritico] = useState(''); // Para mostrar tus errores de API
+  const [errorCritico, setErrorCritico] = useState('');
   const [avisoFallback, setAvisoFallback] = useState<FallbackInfo | null>(null);
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const conversacionActiva = conversaciones.find((conversacion) => conversacion.id === activeChatId) ?? null;
+  const historial = conversacionActiva?.historial ?? [];
+
+  useEffect(() => {
+    const rawSession = window.localStorage.getItem(CHAT_STORAGE_KEY)
+      ?? window.sessionStorage.getItem(CHAT_STORAGE_KEY);
+    if (!rawSession) {
+      const defaultConversation = createConversation();
+      setConversaciones([defaultConversation]);
+      setActiveChatId(defaultConversation.id);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(rawSession) as {
+        historial?: MensajeHistorial[];
+        conversaciones?: ConversacionChat[];
+        activeChatId?: string;
+      };
+
+      if (Array.isArray(parsed.conversaciones) && parsed.conversaciones.length > 0) {
+        setConversaciones(parsed.conversaciones);
+        setActiveChatId(parsed.activeChatId ?? parsed.conversaciones[0].id);
+        return;
+      }
+
+      if (Array.isArray(parsed.historial)) {
+        const migratedConversation: ConversacionChat = {
+          ...createConversation(),
+          titulo: parsed.historial[0]?.parts?.[0]?.text
+            ? buildConversationTitle(parsed.historial[0].parts[0].text)
+            : DEFAULT_CHAT_TITLE,
+          historial: parsed.historial,
+        };
+        setConversaciones([migratedConversation]);
+        setActiveChatId(migratedConversation.id);
+        return;
+      }
+
+      const defaultConversation = createConversation();
+      setConversaciones([defaultConversation]);
+      setActiveChatId(defaultConversation.id);
+    } catch (error) {
+      console.warn('No se pudo restaurar la sesion del chat.', error);
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      window.sessionStorage.removeItem(CHAT_STORAGE_KEY);
+      const defaultConversation = createConversation();
+      setConversaciones([defaultConversation]);
+      setActiveChatId(defaultConversation.id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (conversaciones.length === 0 || !activeChatId) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify({ conversaciones, activeChatId }),
+    );
+  }, [conversaciones, activeChatId]);
+
+  useEffect(() => {
+    setErrorCritico('');
+    setAvisoFallback(null);
+  }, [activeChatId]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [historial, cargando, errorCritico, avisoFallback]);
 
+  const crearNuevaConversacion = () => {
+    const nuevaConversacion = createConversation(`Conversación ${conversaciones.length + 1}`);
+    setConversaciones((prev) => [nuevaConversacion, ...prev]);
+    setActiveChatId(nuevaConversacion.id);
+    setMensaje('');
+    setErrorCritico('');
+    setAvisoFallback(null);
+  };
+
+  const eliminarConversacion = (conversationId: string) => {
+    setConversaciones((prev) => {
+      const remaining = prev.filter((conversacion) => conversacion.id !== conversationId);
+
+      if (remaining.length === 0) {
+        const nuevaConversacion = createConversation();
+        setActiveChatId(nuevaConversacion.id);
+        return [nuevaConversacion];
+      }
+
+      if (conversationId === activeChatId) {
+        setActiveChatId(remaining[0].id);
+      }
+
+      return remaining;
+    });
+  };
+
   const enviarMensaje = async (e: React.FormEvent) => {
     e.preventDefault();
     const mensajeLimpio = mensaje.trim();
-    if (!mensajeLimpio) return;
+    if (!mensajeLimpio || !conversacionActiva) return;
 
     setCargando(true);
     setErrorCritico('');
@@ -311,10 +135,9 @@ export default function Home() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Enviamos el mensaje Y el historial actual
         body: JSON.stringify({
           mensaje: mensajeLimpio,
-          historial: historial.map(({ role, parts }) => ({ role, parts })),
+          historial: conversacionActiva.historial.map(({ role, parts }) => ({ role, parts })),
         })
       });
 
@@ -331,17 +154,34 @@ export default function Home() {
         }
       }
 
-      // Actualizamos la pantalla con ambos mensajes
-      setHistorial((prev) => [
-        ...prev,
+      const nuevosMensajes: MensajeHistorial[] = [
         { role: 'user', parts: [{ text: mensajeLimpio }] },
         {
           role: 'model',
           parts: [{ text: data.respuesta }],
           origen: data?.fallback ? getOrigenMensaje(data?.motivo) : 'openai',
           resumenCiudades: Array.isArray(data?.resumenCiudades) ? data.resumenCiudades : [],
+        },
+      ];
+
+      setConversaciones((prev) => {
+        const actual = prev.find((conversacion) => conversacion.id === conversacionActiva.id);
+        if (!actual) {
+          return prev;
         }
-      ]);
+
+        const updatedConversation: ConversacionChat = {
+          ...actual,
+          titulo:
+            actual.historial.length === 0 || actual.titulo.startsWith('Conversación') || actual.titulo === DEFAULT_CHAT_TITLE
+              ? buildConversationTitle(mensajeLimpio)
+              : actual.titulo,
+          historial: [...actual.historial, ...nuevosMensajes],
+          updatedAt: new Date().toISOString(),
+        };
+
+        return moveConversationToTop(prev, updatedConversation);
+      });
 
     } catch (error) {
       console.error(error);
@@ -353,204 +193,72 @@ export default function Home() {
   };
 
   return (
-    <main className="p-10 max-w-3xl mx-auto flex flex-col gap-6 font-sans h-screen">
-      <h1 className="text-3xl font-bold text-blue-600">🌤️ El Señor del Clima</h1>
-      
-      {/* Caja de chat con historial */}
-      <div
-        ref={chatContainerRef}
-        className="bg-gray-100 p-6 rounded-lg flex-1 overflow-y-auto border border-gray-300 flex flex-col gap-4"
-      >
-        {historial.length === 0 && !errorCritico && (
-          <p className="text-gray-500 text-center mt-10">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
-        )}
+    <main className="mx-auto grid h-screen max-w-7xl gap-4 p-4 md:p-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <ChatSidebar
+        conversaciones={conversaciones}
+        activeChatId={activeChatId}
+        onCreateConversation={crearNuevaConversacion}
+        onSelectConversation={setActiveChatId}
+        onDeleteConversation={eliminarConversacion}
+      />
 
-        {avisoFallback && (
-          <p className={`border rounded p-3 ${avisoFallback.tono} ${avisoFallback.borde}`}>
-            {avisoFallback.texto}
-          </p>
-        )}
-
-        {historial.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`p-4 rounded-lg border ${getMessageWidthClass(msg)} ${
-              msg.role === 'user'
-                ? 'bg-blue-200 border-blue-200 self-end text-black'
-                : `${getMessageAirTone(msg.resumenCiudades).caja} self-start text-black`
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <strong>{msg.role === 'user' ? 'Tú' : 'Señor del Clima'}:</strong>
-              {msg.role === 'model' && (
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full border ${
-                    msg.origen === 'fallback_cuota'
-                      ? 'bg-amber-100 text-amber-900 border-amber-300'
-                      : msg.origen === 'fallback_red'
-                        ? 'bg-sky-100 text-sky-900 border-sky-300'
-                        : msg.origen === 'fallback_saturacion'
-                          ? 'bg-orange-100 text-orange-900 border-orange-300'
-                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                  }`}
-                >
-                  {msg.origen === 'fallback_cuota'
-                    ? 'Respaldo por cuota'
-                    : msg.origen === 'fallback_red'
-                      ? 'Respaldo por red'
-                      : msg.origen === 'fallback_saturacion'
-                        ? 'Respaldo por saturación'
-                        : 'OpenAI'}
-                </span>
-              )}
-            </div>
-            {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 1 && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 p-3">
-                <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">Comparación de ciudades</p>
-                    <p className="mt-1 text-xs text-slate-500">Resumen visual para detectar rápidamente qué ciudad está peor por aire o por clima actual.</p>
-                  </div>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
-                    {msg.resumenCiudades.length} ciudades
-                  </span>
-                </div>
-
-                <div className="grid gap-3 xl:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
-                  <p className="text-sm font-semibold text-slate-900">Ranking aire</p>
-                  <p className="mt-1 text-xs text-slate-500">Ordenado por AQI europeo más alto.</p>
-                  <div className="mt-3 space-y-2">
-                    {getWorstAirRanking(msg.resumenCiudades).map((resumen, index) => (
-                      <div key={`${resumen.ciudad}-air-rank`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">{getRankingMedal(index)} {resumen.ciudad}</p>
-                          <p className="text-xs text-slate-500">{resumen.calidadAireCategoria ?? 'Sin categoría de aire'}</p>
-                        </div>
-                        <span className="text-sm font-semibold text-slate-800">AQI {resumen.calidadAireAqi ?? 'Sin dato'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
-                  <p className="text-sm font-semibold text-slate-900">Ranking clima</p>
-                  <p className="mt-1 text-xs text-slate-500">Basado en temperatura, precipitación y bochorno actual.</p>
-                  <div className="mt-3 space-y-2">
-                    {getWorstClimateRanking(msg.resumenCiudades).map((resumen, index) => (
-                      <div key={`${resumen.ciudad}-weather-rank`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">{getRankingMedal(index)} {resumen.ciudad}</p>
-                          <p className="text-xs text-slate-500">{formatMetric(resumen.temperaturaC, '°C')} · {formatMetric(resumen.precipitacionMm, ' mm')}</p>
-                        </div>
-                        <span className="text-sm font-semibold text-slate-800">Puntaje {getClimateSeverityScore(resumen).toFixed(1)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                </div>
-              </div>
-            )}
-            {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 0 && (
-              <div className={`mt-3 grid gap-3 w-full ${getSummaryGridClass(msg.resumenCiudades)}`}>
-                {msg.resumenCiudades.map((resumen, index) => {
-                  const aire = getAirQualityVisual(resumen.calidadAireCategoria);
-                  const recomendacionAire = getAirQualityRecommendation(resumen.calidadAireCategoria);
-
-                  return (
-                    <div
-                      key={resumen.ciudad}
-                      className={`rounded-xl border border-slate-200 bg-slate-50 p-3 w-full min-w-0 ${getSummaryCardSpanClass(index, msg.resumenCiudades)}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-slate-900 leading-5">{resumen.ciudad}</p>
-                          <p className="text-xs text-slate-500 mt-1">Fuente: {resumen.fuente}</p>
-                        </div>
-                        <span className={`rounded-full border px-2 py-1 text-xs font-medium ${aire.clases}`}>
-                          {aire.icono} {resumen.calidadAireCategoria ?? 'Aire sin dato'}
-                        </span>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700">
-                        <div className="rounded-lg bg-white p-2 border border-slate-200">
-                          <p className="text-xs text-slate-500">Temperatura</p>
-                          <p className="font-semibold">{formatMetric(resumen.temperaturaC, '°C')}</p>
-                        </div>
-                        <div className="rounded-lg bg-white p-2 border border-slate-200">
-                          <p className="text-xs text-slate-500">Humedad</p>
-                          <p className="font-semibold">{formatMetric(resumen.humedadPct, '%')}</p>
-                        </div>
-                        <div className="rounded-lg bg-white p-2 border border-slate-200">
-                          <p className="text-xs text-slate-500">Precipitación</p>
-                          <p className="font-semibold">{formatMetric(resumen.precipitacionMm, ' mm')}</p>
-                        </div>
-                        <div className="rounded-lg bg-white p-2 border border-slate-200">
-                          <p className="text-xs text-slate-500">AQI europeo</p>
-                          <p className="font-semibold">{resumen.calidadAireAqi ?? 'Sin dato'}</p>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 flex gap-2 text-xs text-slate-600">
-                        <span className="rounded-full bg-white px-2 py-1 border border-slate-200">
-                          PM2.5: {formatMetric(resumen.pm25, ' µg/m3')}
-                        </span>
-                        <span className="rounded-full bg-white px-2 py-1 border border-slate-200">
-                          PM10: {formatMetric(resumen.pm10, ' µg/m3')}
-                        </span>
-                      </div>
-
-                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-medium ${recomendacionAire.clases}`}>
-                        Recomendación aire: {recomendacionAire.texto}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {msg.role === 'model' ? (
-              <div className={`mt-2 text-[15px] leading-7 ${getMessageAirTone(msg.resumenCiudades).markdown}`}>
-                <ReactMarkdown
-                  components={{
-                    p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                    ol: ({ children }) => <ol className="mb-3 list-decimal pl-5 space-y-1">{children}</ol>,
-                    ul: ({ children }) => <ul className="mb-3 list-disc pl-5 space-y-1">{children}</ul>,
-                    li: ({ children }) => <li>{children}</li>,
-                    strong: ({ children }) => <strong className="font-semibold text-gray-950">{children}</strong>,
-                  }}
-                >
-                  {msg.parts[0].text}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              <p className="whitespace-pre-wrap mt-1">{msg.parts[0].text}</p>
-            )}
+      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-200 pb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              {conversacionActiva?.titulo || DEFAULT_CHAT_TITLE}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {conversacionActiva && conversacionActiva.historial.length > 0
+                ? `${conversacionActiva.historial.length} mensajes en esta conversación`
+                : 'Empieza una nueva consulta del clima'}
+            </p>
           </div>
-        ))}
-        
-        {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
-        {errorCritico && <p className="text-red-600 font-bold bg-red-100 p-3 rounded">{errorCritico}</p>}
-        <div ref={chatBottomRef} />
-      </div>
+        </div>
 
-      <form onSubmit={enviarMensaje} className="flex gap-2 pb-10">
-        <input
-          type="text"
-          value={mensaje}
-          onChange={(e) => setMensaje(e.target.value)}
-          placeholder="Ej: ¿Qué ropa me pongo para salir al parque?"
-          className="border border-gray-300 rounded p-3 flex-1 text-gray-900 bg-white"
-          disabled={cargando}
-        />
-        <button 
-          type="submit" 
-          disabled={cargando || !mensaje.trim()}
-          className="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700 disabled:bg-blue-300"
+        <div
+          ref={chatContainerRef}
+          className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-gray-100 p-6"
         >
-          Enviar
-        </button>
-      </form>
+          <div className="flex flex-col gap-4">
+            {historial.length === 0 && !errorCritico && (
+              <p className="mt-10 text-center text-gray-500">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
+            )}
+
+            {avisoFallback && (
+              <p className={`border rounded p-3 ${avisoFallback.tono} ${avisoFallback.borde}`}>
+                {avisoFallback.texto}
+              </p>
+            )}
+
+            {historial.map((msg, idx) => (
+              <ChatMessage key={idx} msg={msg} />
+            ))}
+
+            {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
+            {errorCritico && <p className="rounded bg-red-100 p-3 font-bold text-red-600">{errorCritico}</p>}
+            <div ref={chatBottomRef} />
+          </div>
+        </div>
+
+        <form onSubmit={enviarMensaje} className="mt-4 flex gap-2">
+          <input
+            type="text"
+            value={mensaje}
+            onChange={(e) => setMensaje(e.target.value)}
+            placeholder="Ej: ¿Qué ropa me pongo para salir al parque?"
+            className="flex-1 rounded-xl border border-gray-300 bg-white p-3 text-gray-900"
+            disabled={cargando || !conversacionActiva}
+          />
+          <button
+            type="submit"
+            disabled={cargando || !mensaje.trim() || !conversacionActiva}
+            className="rounded-xl bg-blue-600 px-6 py-3 text-white transition hover:bg-blue-700 disabled:bg-blue-300"
+          >
+            Enviar
+          </button>
+        </form>
+      </section>
     </main>
   );
 }
