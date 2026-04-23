@@ -30,6 +30,10 @@ type ClimaDebug = {
   temperaturaC: number | null;
   humedadPct: number | null;
   precipitacionMm: number | null;
+  calidadAireAqi: number | null;
+  calidadAireCategoria: string | null;
+  pm25: number | null;
+  pm10: number | null;
   error: string | null;
 };
 
@@ -47,6 +51,17 @@ type OpenMeteoForecastResponse = {
     precipitation?: number;
   };
   daily?: DailyWeatherResponse;
+};
+
+type OpenMeteoAirQualityResponse = {
+  current?: {
+    european_aqi?: number;
+    us_aqi?: number;
+    pm2_5?: number;
+    pm10?: number;
+    ozone?: number;
+    nitrogen_dioxide?: number;
+  };
 };
 
 type OpenMeteoGeocodingResponse = {
@@ -70,6 +85,18 @@ type CityWeatherContext = {
   city: ResolvedCity;
   climaDebug: ClimaDebug;
   contexto: string;
+};
+
+type CitySummary = {
+  ciudad: string;
+  temperaturaC: number | null;
+  humedadPct: number | null;
+  precipitacionMm: number | null;
+  calidadAireAqi: number | null;
+  calidadAireCategoria: string | null;
+  pm25: number | null;
+  pm10: number | null;
+  fuente: string;
 };
 
 function buildQuotaFallbackMessage(ciudad: string) {
@@ -184,6 +211,7 @@ function buildFallbackResponseBody(
   motivo: FallbackMotivo,
   reintentarEnSegundos: number,
   climaOpenMeteo: ClimaDebug,
+  resumenCiudades: CitySummary[] = [],
 ) {
   const ciudad = climaOpenMeteo.ciudad || DEFAULT_CITY_NAME;
   const respuesta =
@@ -199,6 +227,21 @@ function buildFallbackResponseBody(
     motivo,
     reintentarEnSegundos,
     climaOpenMeteo,
+    resumenCiudades,
+  };
+}
+
+function buildCitySummary(weatherContext: CityWeatherContext): CitySummary {
+  return {
+    ciudad: weatherContext.city.displayName,
+    temperaturaC: weatherContext.climaDebug.temperaturaC,
+    humedadPct: weatherContext.climaDebug.humedadPct,
+    precipitacionMm: weatherContext.climaDebug.precipitacionMm,
+    calidadAireAqi: weatherContext.climaDebug.calidadAireAqi,
+    calidadAireCategoria: weatherContext.climaDebug.calidadAireCategoria,
+    pm25: weatherContext.climaDebug.pm25,
+    pm10: weatherContext.climaDebug.pm10,
+    fuente: weatherContext.climaDebug.fuente,
   };
 }
 
@@ -238,6 +281,38 @@ function formatDailyClimateContext(daily: DailyWeatherResponse | undefined) {
   return summaries.length > 0
     ? summaries.join(" | ")
     : "No hay resumen diario disponible para dias anteriores o proximos.";
+}
+
+function getEuropeanAqiLabel(aqi: number | null) {
+  if (aqi === null) return null;
+  if (aqi <= 20) return "buena";
+  if (aqi <= 40) return "aceptable";
+  if (aqi <= 60) return "moderada";
+  if (aqi <= 80) return "mala";
+  if (aqi <= 100) return "muy mala";
+  return "extremadamente mala";
+}
+
+function getAirQualityRecommendationText(categoria: string | null) {
+  switch (categoria) {
+    case "buena":
+      return "Conviene salir al aire libre con normalidad.";
+    case "aceptable":
+      return "Puedes salir con normalidad, sin una limitacion importante por aire.";
+    case "moderada":
+      return "Conviene salir con precaucion si hay sensibilidad respiratoria.";
+    case "mala":
+      return "Mejor limitar actividad fisica intensa al aire libre.";
+    case "muy mala":
+    case "extremadamente mala":
+      return "Conviene evitar actividades al aire libre y reducir exposicion prolongada.";
+    default:
+      return "No hay recomendacion por calidad del aire disponible.";
+  }
+}
+
+function hasComparisonIntent(message: string) {
+  return /\b(compar|contra|versus|vs|igual que|mejor que|peor que|comparala|compárala)\b/i.test(message);
 }
 
 function normalizeText(value: string) {
@@ -334,10 +409,12 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
   const message = mensajeUsuario.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
   const candidates: string[] = [];
   const patterns = [
-    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad)[^.!?]*\ben\s+([^,.!?]+)/i,
+    /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad)[^.!?]*\b(?:en|de)\s+([^,.!?]+)/i,
     /\ben\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
+    /\bde\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
     /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^,.!?]+)/i,
     /\bcompar(?:a|ame|áme)?\s+([^,.!?]+?)\s+(?:y|vs|contra)\s+([^,.!?]+)/i,
+    /\bcompar(?:a|ala|ála)?\s+con\s+(?:el\s+clima\s+de\s+)?([^,.!?]+)/i,
     /\bentre\s+([^,.!?]+?)\s+y\s+([^,.!?]+)/i,
     /^(?:y|tambien|ahora)\s+([^,.!?]+)$/i,
   ];
@@ -366,8 +443,7 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
     }
   }
 
-  if (candidates.length === 0) {
-    for (let index = historialUsuario.length - 1; index >= 0; index -= 1) {
+  for (let index = historialUsuario.length - 1; index >= 0 && candidates.length < 2; index -= 1) {
       const item = historialUsuario[index];
       if (!item || typeof item !== "object") continue;
       const role = (item as { role?: unknown }).role;
@@ -387,9 +463,17 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
 
       const previousCandidates = extractRequestedCities(previousText, []);
       if (previousCandidates.length > 0) {
-        return previousCandidates.slice(0, 2);
+        for (const previousCandidate of previousCandidates) {
+          addCandidate(candidates, previousCandidate);
+          if (candidates.length >= 2) {
+            break;
+          }
+        }
+
+        if (candidates.length > 0 && !hasComparisonIntent(message)) {
+          break;
+        }
       }
-    }
   }
 
   return candidates.slice(0, 2);
@@ -471,6 +555,10 @@ async function fetchWeatherContextForCity(city: ResolvedCity, fechaYHoraActual: 
     temperaturaC: null,
     humedadPct: null,
     precipitacionMm: null,
+    calidadAireAqi: null,
+    calidadAireCategoria: null,
+    pm25: null,
+    pm10: null,
     error: null,
   };
 
@@ -478,7 +566,11 @@ async function fetchWeatherContextForCity(city: ResolvedCity, fechaYHoraActual: 
 
   try {
     const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}&longitude=${city.longitude}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
-    const respuestaClima = await fetch(urlClima);
+    const urlCalidadAire = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${city.latitude}&longitude=${city.longitude}&current=european_aqi,us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide&timezone=auto`;
+    const [respuestaClima, respuestaCalidadAire] = await Promise.all([
+      fetch(urlClima),
+      fetch(urlCalidadAire),
+    ]);
 
     if (!respuestaClima.ok) {
       climaDebug = {
@@ -495,9 +587,35 @@ async function fetchWeatherContextForCity(city: ResolvedCity, fechaYHoraActual: 
     const humedad = datosReales.current?.relative_humidity_2m;
     const lluvia = datosReales.current?.precipitation;
     const dailyContext = formatDailyClimateContext(datosReales.daily);
+    let calidadAireContext = "Calidad del aire no disponible.";
+    let aqiEuropeo: number | null = null;
+    let pm25: number | null = null;
+    let pm10: number | null = null;
 
-    contexto = `${city.displayName}. Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. Resumen diario reciente y proximo: ${dailyContext}.`;
+    if (respuestaCalidadAire.ok) {
+      const airQuality = (await respuestaCalidadAire.json()) as OpenMeteoAirQualityResponse;
+      aqiEuropeo = typeof airQuality.current?.european_aqi === "number" ? airQuality.current.european_aqi : null;
+      pm25 = typeof airQuality.current?.pm2_5 === "number" ? airQuality.current.pm2_5 : null;
+      pm10 = typeof airQuality.current?.pm10 === "number" ? airQuality.current.pm10 : null;
+      const categoriaAire = getEuropeanAqiLabel(aqiEuropeo);
+      const recomendacionAire = getAirQualityRecommendationText(categoriaAire);
+
+      calidadAireContext = categoriaAire
+        ? `Calidad del aire actual: AQI europeo ${aqiEuropeo} (${categoriaAire}), PM2.5 ${pm25 ?? "sin dato"} µg/m3, PM10 ${pm10 ?? "sin dato"} µg/m3. Recomendacion por aire: ${recomendacionAire}`
+        : "Calidad del aire no disponible.";
+
+      climaDebug = {
+        ...climaDebug,
+        calidadAireAqi: aqiEuropeo,
+        calidadAireCategoria: categoriaAire,
+        pm25,
+        pm10,
+      };
+    }
+
+    contexto = `${city.displayName}. Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. ${calidadAireContext} Resumen diario reciente y proximo: ${dailyContext}.`;
     climaDebug = {
+      ...climaDebug,
       fuente: "open-meteo",
       ciudad: city.displayName,
       actualizadoEn: fechaYHoraActual,
@@ -579,6 +697,10 @@ export async function POST(request: Request) {
     temperaturaC: null,
     humedadPct: null,
     precipitacionMm: null,
+    calidadAireAqi: null,
+    calidadAireCategoria: null,
+    pm25: null,
+    pm10: null,
     error: null,
   };
 
@@ -620,6 +742,7 @@ export async function POST(request: Request) {
     const weatherContexts = await Promise.all(
       cityResolution.cities.map((city) => fetchWeatherContextForCity(city, fechaYHoraActual)),
     );
+    const resumenCiudades = weatherContexts.map(buildCitySummary);
     const datosDelClimaAPI = weatherContexts.map((item) => item.contexto).join("\n\n");
     const ciudadesConsultadas = weatherContexts.map((item) => item.city.displayName).join(" y ");
     climaDebug = {
@@ -632,7 +755,7 @@ export async function POST(request: Request) {
     const cooldownSeconds = getCooldownSecondsRemaining();
     if (cooldownSeconds > 0) {
       return NextResponse.json(
-        buildFallbackResponseBody(cooldownMotivo, cooldownSeconds, climaDebug),
+        buildFallbackResponseBody(cooldownMotivo, cooldownSeconds, climaDebug, resumenCiudades),
         { status: 200 },
       );
     }
@@ -659,7 +782,11 @@ export async function POST(request: Request) {
       respuestaIA = `Con los datos actuales en ${ciudadesConsultadas}, te recomiendo ropa ligera, hidratarte y evitar exposición prolongada al sol en horas de mayor intensidad.`;
     }
 
-    return NextResponse.json({ respuesta: respuestaIA, provider: "openai" });
+    return NextResponse.json({
+      respuesta: respuestaIA,
+      provider: "openai",
+      resumenCiudades,
+    });
   } catch (error) {
     const detalle =
       error instanceof Error ? error.message : "Error desconocido";
@@ -692,6 +819,7 @@ export async function POST(request: Request) {
           "quota_exceeded",
           Math.ceil(cooldownMs / 1000),
           climaDebug,
+          [],
         ),
         { status: 200 },
       );
@@ -717,6 +845,7 @@ export async function POST(request: Request) {
           transientKind,
           Math.ceil(cooldownMs / 1000),
           climaDebug,
+          [],
         ),
         { status: 200 },
       );
