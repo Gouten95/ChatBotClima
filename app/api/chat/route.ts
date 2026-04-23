@@ -60,9 +60,16 @@ type OpenMeteoGeocodingResponse = {
 };
 
 type ResolvedCity = {
+  requestedName: string;
   displayName: string;
   latitude: number;
   longitude: number;
+};
+
+type CityWeatherContext = {
+  city: ResolvedCity;
+  climaDebug: ClimaDebug;
+  contexto: string;
 };
 
 function buildQuotaFallbackMessage(ciudad: string) {
@@ -248,6 +255,19 @@ function trimTrailingTimeWords(value: string) {
     .trim();
 }
 
+function normalizeCityAlias(value: string) {
+  const normalized = normalizeText(value);
+  const aliases: Record<string, string> = {
+    cdmx: "Ciudad de Mexico",
+    "ciudad de mexico": "Ciudad de Mexico",
+    "mexico city": "Ciudad de Mexico",
+    df: "Ciudad de Mexico",
+    "edo mex": "Estado de Mexico",
+  };
+
+  return aliases[normalized] ?? value.trim();
+}
+
 function isLikelyCityCandidate(value: string) {
   const normalized = normalizeText(value);
   const blockedTerms = new Set([
@@ -285,81 +305,220 @@ function isLikelyCityCandidate(value: string) {
   return invalidWordCount < words.length;
 }
 
-function extractRequestedCity(mensajeUsuario: string) {
+function cleanCityCandidate(value: string) {
+  return trimTrailingTimeWords(value)
+    .replace(/^(la ciudad de|ciudad de|el clima de|clima de|el tiempo de|tiempo de)\s+/i, "")
+    .replace(/^(voy a viajar a|viajo a|viajar a|me voy a|ire a|ir a|hacia)\s+/i, "")
+    .replace(/^(y|tambien|ahora|comparame|compárame|compara|contra|vs)\s+/i, "")
+    .replace(/[()]/g, "")
+    .trim();
+}
+
+function addCandidate(candidates: string[], rawValue: string) {
+  const cleaned = cleanCityCandidate(rawValue);
+  const aliased = normalizeCityAlias(cleaned);
+
+  if (!aliased || aliased.length < 2 || !isLikelyCityCandidate(aliased)) {
+    return;
+  }
+
+  const normalized = normalizeText(aliased);
+  if (candidates.some((item) => normalizeText(item) === normalized)) {
+    return;
+  }
+
+  candidates.push(aliased);
+}
+
+function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]): string[] {
   const message = mensajeUsuario.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
+  const candidates: string[] = [];
   const patterns = [
     /\b(?:clima|tiempo|pronostico|temperatura|lluvia|humedad)[^.!?]*\ben\s+([^,.!?]+)/i,
     /\ben\s+([^,.!?]+?)(?:\s+(?:hoy|mañana|manana|ayer|ahora|ahorita|actualmente|este|esta)\b|$)/i,
+    /\b(?:viajar|viajo|ire|ir|voy)\s+(?:a|hacia)\s+([^,.!?]+)/i,
+    /\bcompar(?:a|ame|áme)?\s+([^,.!?]+?)\s+(?:y|vs|contra)\s+([^,.!?]+)/i,
+    /\bentre\s+([^,.!?]+?)\s+y\s+([^,.!?]+)/i,
+    /^(?:y|tambien|ahora)\s+([^,.!?]+)$/i,
   ];
 
   for (const pattern of patterns) {
     const match = message.match(pattern);
-    const candidate = match?.[1]?.trim();
-    if (!candidate) continue;
+    if (!match) continue;
 
-    const cleaned = trimTrailingTimeWords(candidate)
-      .replace(/^(la ciudad de|ciudad de|el clima de|clima de|el tiempo de|tiempo de)\s+/i, "")
-      .trim();
-
-    if (cleaned.length >= 2 && isLikelyCityCandidate(cleaned)) {
-      return cleaned;
+    for (const candidate of match.slice(1)) {
+      if (typeof candidate === "string") {
+        addCandidate(candidates, candidate);
+      }
     }
   }
 
-  return null;
+  const compactCompare = message.match(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ.\s]+?)\s+(?:vs|contra)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ.\s]+)\b/i);
+  if (compactCompare) {
+    addCandidate(candidates, compactCompare[1]);
+    addCandidate(candidates, compactCompare[2]);
+  }
+
+  if (candidates.length === 0) {
+    const shortFollowUp = message.match(/^(?:y|tambien|ahora)\s+en\s+([^,.!?]+)$/i);
+    if (shortFollowUp?.[1]) {
+      addCandidate(candidates, shortFollowUp[1]);
+    }
+  }
+
+  if (candidates.length === 0) {
+    for (let index = historialUsuario.length - 1; index >= 0; index -= 1) {
+      const item = historialUsuario[index];
+      if (!item || typeof item !== "object") continue;
+      const role = (item as { role?: unknown }).role;
+      const parts = (item as { parts?: unknown }).parts;
+      if (role !== "user" || !Array.isArray(parts)) continue;
+
+      const previousText = parts
+        .map((part) =>
+          part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+            ? (part as { text: string }).text
+            : "",
+        )
+        .join(" ")
+        .trim();
+
+      if (!previousText) continue;
+
+      const previousCandidates = extractRequestedCities(previousText, []);
+      if (previousCandidates.length > 0) {
+        return previousCandidates.slice(0, 2);
+      }
+    }
+  }
+
+  return candidates.slice(0, 2);
 }
 
-async function resolveRequestedCity(mensajeUsuario: string) {
-  const cityCandidate = extractRequestedCity(mensajeUsuario);
+async function resolveRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]) {
+  const cityCandidates = extractRequestedCities(mensajeUsuario, historialUsuario);
 
-  if (!cityCandidate) {
+  if (cityCandidates.length === 0) {
     return {
-      city: {
-        displayName: DEFAULT_CITY_NAME,
-        latitude: DEFAULT_CITY_LAT,
-        longitude: DEFAULT_CITY_LON,
-      } satisfies ResolvedCity,
-      requestedCity: null,
+      cities: [
+        {
+          requestedName: DEFAULT_CITY_NAME,
+          displayName: DEFAULT_CITY_NAME,
+          latitude: DEFAULT_CITY_LAT,
+          longitude: DEFAULT_CITY_LON,
+        } satisfies ResolvedCity,
+      ],
+      requestedCities: [],
     };
   }
 
-  const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
-  const response = await fetch(geocodingUrl);
+  const resolvedCities = await Promise.all(
+    cityCandidates.map(async (cityCandidate: string) => {
+      const geocodingUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityCandidate)}&count=1&language=es&format=json`;
+      const response = await fetch(geocodingUrl);
 
-  if (!response.ok) {
+      if (!response.ok) {
+        throw new Error("No se pudo ubicar la ciudad solicitada por un problema temporal.");
+      }
+
+      const data = (await response.json()) as OpenMeteoGeocodingResponse;
+      const result = data.results?.[0];
+
+      if (
+        !result ||
+        typeof result.latitude !== "number" ||
+        typeof result.longitude !== "number" ||
+        typeof result.name !== "string"
+      ) {
+        throw new Error(`No pude ubicar la ciudad \"${cityCandidate}\". Intenta con un nombre mas especifico.`);
+      }
+
+      const displayName = [result.name, result.admin1, result.country]
+        .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+        .join(", ");
+
+      return {
+        requestedName: cityCandidate,
+        displayName,
+        latitude: result.latitude,
+        longitude: result.longitude,
+      } satisfies ResolvedCity;
+    }),
+  ).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : "No se pudo ubicar la ciudad solicitada.";
+
     return {
-      error: "No se pudo ubicar la ciudad solicitada por un problema temporal.",
-      status: 503,
+      error: message,
+      status: message.includes("problema temporal") ? 503 : 400,
     };
+  });
+
+  if (!Array.isArray(resolvedCities)) {
+    return resolvedCities;
   }
-
-  const data = (await response.json()) as OpenMeteoGeocodingResponse;
-  const result = data.results?.[0];
-
-  if (
-    !result ||
-    typeof result.latitude !== "number" ||
-    typeof result.longitude !== "number" ||
-    typeof result.name !== "string"
-  ) {
-    return {
-      error: `No pude ubicar la ciudad "${cityCandidate}". Intenta con un nombre mas especifico.`,
-      status: 400,
-    };
-  }
-
-  const displayName = [result.name, result.admin1, result.country]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join(", ");
 
   return {
-    city: {
-      displayName,
-      latitude: result.latitude,
-      longitude: result.longitude,
-    } satisfies ResolvedCity,
-    requestedCity: cityCandidate,
+    cities: resolvedCities,
+    requestedCities: cityCandidates,
   };
+}
+
+async function fetchWeatherContextForCity(city: ResolvedCity, fechaYHoraActual: string) {
+  let climaDebug: ClimaDebug = {
+    fuente: "open-meteo-fallback",
+    ciudad: city.displayName,
+    actualizadoEn: fechaYHoraActual,
+    temperaturaC: null,
+    humedadPct: null,
+    precipitacionMm: null,
+    error: null,
+  };
+
+  let contexto = `No hubo datos meteorologicos suficientes para ${city.displayName}.`;
+
+  try {
+    const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${city.latitude}&longitude=${city.longitude}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
+    const respuestaClima = await fetch(urlClima);
+
+    if (!respuestaClima.ok) {
+      climaDebug = {
+        ...climaDebug,
+        fuente: "open-meteo-http-error",
+        error: `HTTP ${respuestaClima.status}`,
+      };
+
+      return { city, climaDebug, contexto } satisfies CityWeatherContext;
+    }
+
+    const datosReales = (await respuestaClima.json()) as OpenMeteoForecastResponse;
+    const temp = datosReales.current?.temperature_2m;
+    const humedad = datosReales.current?.relative_humidity_2m;
+    const lluvia = datosReales.current?.precipitation;
+    const dailyContext = formatDailyClimateContext(datosReales.daily);
+
+    contexto = `${city.displayName}. Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. Resumen diario reciente y proximo: ${dailyContext}.`;
+    climaDebug = {
+      fuente: "open-meteo",
+      ciudad: city.displayName,
+      actualizadoEn: fechaYHoraActual,
+      temperaturaC: typeof temp === "number" ? temp : null,
+      humedadPct: typeof humedad === "number" ? humedad : null,
+      precipitacionMm: typeof lluvia === "number" ? lluvia : null,
+      error: null,
+    };
+  } catch (errorClima) {
+    console.warn(
+      `No se pudo obtener el clima real para ${city.displayName}, usando fallback.`,
+      errorClima,
+    );
+    climaDebug = {
+      ...climaDebug,
+      fuente: "open-meteo-error",
+      error: errorClima instanceof Error ? errorClima.message : "Error desconocido",
+    };
+  }
+
+  return { city, climaDebug, contexto } satisfies CityWeatherContext;
 }
 
 function mapHistorialToOpenAIMessages(historialUsuario: unknown[]) {
@@ -445,7 +604,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const cityResolution = await resolveRequestedCity(mensajeUsuario);
+    const cityResolution = await resolveRequestedCities(mensajeUsuario, historialUsuario);
     if ("error" in cityResolution) {
       return NextResponse.json(
         { error: cityResolution.error },
@@ -453,63 +612,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const ciudad = cityResolution.city.displayName;
-    const lat = cityResolution.city.latitude;
-    const lon = cityResolution.city.longitude;
-
     const openai = new OpenAI({ apiKey });
     const systemInstruction = await getSystemInstruction();
 
     // --- INICIO DE LA LLAMADA A LA API REAL ---
     const fechaYHoraActual = new Date().toLocaleString();
-    let datosDelClimaAPI = "Datos no disponibles temporalmente.";
-
+    const weatherContexts = await Promise.all(
+      cityResolution.cities.map((city) => fetchWeatherContextForCity(city, fechaYHoraActual)),
+    );
+    const datosDelClimaAPI = weatherContexts.map((item) => item.contexto).join("\n\n");
+    const ciudadesConsultadas = weatherContexts.map((item) => item.city.displayName).join(" y ");
     climaDebug = {
-      ...climaDebug,
-      ciudad,
-      actualizadoEn: fechaYHoraActual,
-      fuente: "open-meteo-fallback",
+      ...weatherContexts[0].climaDebug,
+      ciudad: ciudadesConsultadas,
     };
-
-    try {
-      const urlClima = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&past_days=2&forecast_days=4&timezone=auto`;
-
-      const respuestaClima = await fetch(urlClima);
-      if (respuestaClima.ok) {
-        const datosReales = (await respuestaClima.json()) as OpenMeteoForecastResponse;
-        const temp = datosReales.current?.temperature_2m;
-        const humedad = datosReales.current?.relative_humidity_2m;
-        const lluvia = datosReales.current?.precipitation;
-        const dailyContext = formatDailyClimateContext(datosReales.daily);
-
-        datosDelClimaAPI = `Clima actual: ${typeof temp === "number" ? `${temp}°C` : "sin temperatura"}, Humedad: ${typeof humedad === "number" ? `${humedad}%` : "sin humedad"}, Precipitacion: ${typeof lluvia === "number" ? `${lluvia}mm` : "sin precipitacion"}. Resumen diario reciente y proximo: ${dailyContext}.`;
-        climaDebug = {
-          fuente: "open-meteo",
-          ciudad,
-          actualizadoEn: fechaYHoraActual,
-          temperaturaC: typeof temp === "number" ? temp : null,
-          humedadPct: typeof humedad === "number" ? humedad : null,
-          precipitacionMm: typeof lluvia === "number" ? lluvia : null,
-          error: null,
-        };
-      } else {
-        climaDebug = {
-          ...climaDebug,
-          fuente: "open-meteo-http-error",
-          error: `HTTP ${respuestaClima.status}`,
-        };
-      }
-    } catch (errorClima) {
-      console.warn(
-        "No se pudo obtener el clima real, usando fallback.",
-        errorClima,
-      );
-      climaDebug = {
-        ...climaDebug,
-        fuente: "open-meteo-error",
-        error: errorClima instanceof Error ? errorClima.message : "Error desconocido",
-      };
-    }
     // --- FIN DE LA LLAMADA A LA API REAL ---
 
     // Si ya sabemos que la cuota está agotada, evitamos pegarle a OpenAI de nuevo.
@@ -522,7 +638,7 @@ export async function POST(request: Request) {
     }
 
     // Inyectamos contexto secretamente
-    const contextoSistema = `Hoy es ${fechaYHoraActual} en ${ciudad}. Usa unicamente estos datos meteorologicos verificados: ${datosDelClimaAPI}. Puedes responder sobre clima actual, pasado cercano y futuro cercano solo si aparece en estos datos. Si te preguntan por una fecha, ciudad o periodo que no este respaldado por estos datos, dilo con claridad y no inventes. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendacion final.`;
+    const contextoSistema = `Hoy es ${fechaYHoraActual}. Ciudades consultadas: ${ciudadesConsultadas}. Usa unicamente estos datos meteorologicos verificados: ${datosDelClimaAPI}. Puedes responder sobre clima actual, pasado cercano y futuro cercano solo si aparece en estos datos. Si hay varias ciudades, puedes compararlas de forma directa. Si te preguntan por una fecha, ciudad o periodo que no este respaldado por estos datos, dilo con claridad y no inventes. Responde en un solo mensaje completo, sin cortar frases a la mitad, y termina con una recomendacion final.`;
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemInstruction },
@@ -540,7 +656,7 @@ export async function POST(request: Request) {
 
     let respuestaIA = completion.choices?.[0]?.message?.content?.trim() || "";
     if (!respuestaIA) {
-      respuestaIA = `Con los datos actuales en ${ciudad}, te recomiendo ropa ligera, hidratarte y evitar exposición prolongada al sol en horas de mayor intensidad.`;
+      respuestaIA = `Con los datos actuales en ${ciudadesConsultadas}, te recomiendo ropa ligera, hidratarte y evitar exposición prolongada al sol en horas de mayor intensidad.`;
     }
 
     return NextResponse.json({ respuesta: respuestaIA, provider: "openai" });
