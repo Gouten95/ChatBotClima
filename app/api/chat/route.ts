@@ -323,7 +323,7 @@ export async function POST(request: Request) {
       model: modelName,
       messages,
       temperature: 0.3,
-      max_tokens: 500,
+      max_completion_tokens: 500,
     });
 
     let respuestaIA = completion.choices?.[0]?.message?.content?.trim() || "";
