@@ -1,65 +1,233 @@
-import Image from "next/image";
+'use client';
+import { useState } from 'react';
+
+// Tipo para que TypeScript no se queje del formato de memoria
+type MensajeHistorial = {
+  role: 'user' | 'model';
+  parts: { text: string }[];
+  origen?: 'openai' | 'fallback_cuota' | 'fallback_red' | 'fallback_saturacion';
+};
+
+type FallbackInfo = {
+  texto: string;
+  tono: string;
+  borde: string;
+};
+
+function getFallbackInfo(data: {
+  motivo?: string;
+  reintentarEnSegundos?: number;
+}): FallbackInfo {
+  if (
+    data?.motivo === 'quota_cooldown' &&
+    typeof data?.reintentarEnSegundos === 'number'
+  ) {
+    return {
+      texto: `OpenAI sin cuota temporalmente. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
+      tono: 'text-amber-950 bg-amber-100',
+      borde: 'border-amber-300',
+    };
+  }
+
+  if (data?.motivo === 'quota_exceeded') {
+    return {
+      texto: 'OpenAI sin cuota temporalmente. Mostrando respuesta de respaldo.',
+      tono: 'text-amber-950 bg-amber-100',
+      borde: 'border-amber-300',
+    };
+  }
+
+  if (
+    (data?.motivo === 'network_error' || data?.motivo === 'network_error_cooldown') &&
+    typeof data?.reintentarEnSegundos === 'number'
+  ) {
+    return {
+      texto: `No hubo conexión estable con OpenAI. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
+      tono: 'text-sky-950 bg-sky-100',
+      borde: 'border-sky-300',
+    };
+  }
+
+  if (data?.motivo === 'network_error' || data?.motivo === 'network_error_cooldown') {
+    return {
+      texto: 'No hubo conexión estable con OpenAI. Mostrando respuesta con respaldo temporal.',
+      tono: 'text-sky-950 bg-sky-100',
+      borde: 'border-sky-300',
+    };
+  }
+
+  if (
+    (data?.motivo === 'service_overloaded' || data?.motivo === 'service_overloaded_cooldown') &&
+    typeof data?.reintentarEnSegundos === 'number'
+  ) {
+    return {
+      texto: `OpenAI con alta demanda en este momento. Reintenta en aprox ${data.reintentarEnSegundos}s.`,
+      tono: 'text-orange-950 bg-orange-100',
+      borde: 'border-orange-300',
+    };
+  }
+
+  if (data?.motivo === 'service_overloaded' || data?.motivo === 'service_overloaded_cooldown') {
+    return {
+      texto: 'OpenAI con alta demanda en este momento. Mostrando respuesta de respaldo.',
+      tono: 'text-orange-950 bg-orange-100',
+      borde: 'border-orange-300',
+    };
+  }
+
+  return {
+    texto: 'Respuesta de respaldo temporal activa.',
+    tono: 'text-gray-900 bg-gray-100',
+    borde: 'border-gray-300',
+  };
+}
+
+function getOrigenMensaje(motivo?: string): MensajeHistorial['origen'] {
+  if (motivo === 'quota_cooldown' || motivo === 'quota_exceeded') {
+    return 'fallback_cuota';
+  }
+
+  if (motivo === 'network_error' || motivo === 'network_error_cooldown') {
+    return 'fallback_red';
+  }
+
+  if (motivo === 'service_overloaded' || motivo === 'service_overloaded_cooldown') {
+    return 'fallback_saturacion';
+  }
+
+  return 'openai';
+}
 
 export default function Home() {
+  const [mensaje, setMensaje] = useState('');
+  const [historial, setHistorial] = useState<MensajeHistorial[]>([]);
+  const [cargando, setCargando] = useState(false);
+  const [errorCritico, setErrorCritico] = useState(''); // Para mostrar tus errores de API
+  const [avisoFallback, setAvisoFallback] = useState<FallbackInfo | null>(null);
+
+  const enviarMensaje = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const mensajeLimpio = mensaje.trim();
+    if (!mensajeLimpio) return;
+
+    setCargando(true);
+    setErrorCritico('');
+    setAvisoFallback(null);
+    setMensaje('');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Enviamos el mensaje Y el historial actual
+        body: JSON.stringify({
+          mensaje: mensajeLimpio,
+          historial: historial.map(({ role, parts }) => ({ role, parts })),
+        })
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data?.error || 'Error interno del servidor.');
+      }
+
+      if (data?.fallback) {
+        setAvisoFallback(getFallbackInfo(data));
+        if (data?.climaOpenMeteo) {
+          console.info('Open-Meteo (debug):', data.climaOpenMeteo);
+        }
+      }
+
+      // Actualizamos la pantalla con ambos mensajes
+      setHistorial((prev) => [
+        ...prev,
+        { role: 'user', parts: [{ text: mensajeLimpio }] },
+        {
+          role: 'model',
+          parts: [{ text: data.respuesta }],
+          origen: data?.fallback ? getOrigenMensaje(data?.motivo) : 'openai',
+        }
+      ]);
+
+    } catch (error) {
+      console.error(error);
+      const mensajeError = error instanceof Error ? error.message : 'Error desconocido';
+      setErrorCritico(`Error: ${mensajeError}`);
+    } finally {
+      setCargando(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="p-10 max-w-3xl mx-auto flex flex-col gap-6 font-sans h-screen">
+      <h1 className="text-3xl font-bold text-blue-600">🌤️ El Señor del Clima</h1>
+      
+      {/* Caja de chat con historial */}
+      <div className="bg-gray-100 p-6 rounded-lg flex-1 overflow-y-auto border border-gray-300 flex flex-col gap-4">
+        {historial.length === 0 && !errorCritico && (
+          <p className="text-gray-500 text-center mt-10">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
+        )}
+
+        {avisoFallback && (
+          <p className={`border rounded p-3 ${avisoFallback.tono} ${avisoFallback.borde}`}>
+            {avisoFallback.texto}
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        )}
+
+        {historial.map((msg, idx) => (
+          <div key={idx} className={`p-4 rounded-lg max-w-[85%] ${
+            msg.role === 'user' ? 'bg-blue-200 self-end text-black' : 'bg-white self-start text-black shadow'
+          }`}>
+            <div className="flex items-center gap-2">
+              <strong>{msg.role === 'user' ? 'Tú' : 'Señor del Clima'}:</strong>
+              {msg.role === 'model' && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full border ${
+                    msg.origen === 'fallback_cuota'
+                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                      : msg.origen === 'fallback_red'
+                        ? 'bg-sky-100 text-sky-900 border-sky-300'
+                        : msg.origen === 'fallback_saturacion'
+                          ? 'bg-orange-100 text-orange-900 border-orange-300'
+                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                  }`}
+                >
+                  {msg.origen === 'fallback_cuota'
+                    ? 'Respaldo por cuota'
+                    : msg.origen === 'fallback_red'
+                      ? 'Respaldo por red'
+                      : msg.origen === 'fallback_saturacion'
+                        ? 'Respaldo por saturación'
+                        : 'OpenAI'}
+                </span>
+              )}
+            </div>
+            <p className="whitespace-pre-wrap mt-1">{msg.parts[0].text}</p>
+          </div>
+        ))}
+        
+        {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
+        {errorCritico && <p className="text-red-600 font-bold bg-red-100 p-3 rounded">{errorCritico}</p>}
+      </div>
+
+      <form onSubmit={enviarMensaje} className="flex gap-2 pb-10">
+        <input
+          type="text"
+          value={mensaje}
+          onChange={(e) => setMensaje(e.target.value)}
+          placeholder="Ej: ¿Qué ropa me pongo para salir al parque?"
+          className="border border-gray-300 rounded p-3 flex-1 text-gray-900 bg-white"
+          disabled={cargando}
+        />
+        <button 
+          type="submit" 
+          disabled={cargando || !mensaje.trim()}
+          className="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700 disabled:bg-blue-300"
+        >
+          Enviar
+        </button>
+      </form>
+    </main>
   );
 }

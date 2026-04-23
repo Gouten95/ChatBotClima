@@ -2,6 +2,19 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+Before running the app, create an environment file:
+
+```bash
+cp .env.example .env.local
+```
+
+Then edit `.env.local` and set:
+
+```bash
+OPENAI_API_KEY=your_real_api_key
+OPENAI_MODEL=gpt-4o-mini
+```
+
 First, run the development server:
 
 ```bash
