@@ -232,6 +232,42 @@ function formatMetric(value: number | null, suffix: string) {
   return value === null ? 'Sin dato' : `${value}${suffix}`;
 }
 
+function getSummaryGridClass(resumenCiudades?: ResumenCiudad[]) {
+  const total = resumenCiudades?.length ?? 0;
+
+  if (total <= 1) {
+    return 'grid-cols-1';
+  }
+
+  if (total === 2) {
+    return 'grid-cols-1 lg:grid-cols-2';
+  }
+
+  if (total === 3) {
+    return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3';
+  }
+
+  return 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
+}
+
+function getMessageWidthClass(msg: MensajeHistorial) {
+  if (msg.role === 'user') {
+    return 'max-w-[85%]';
+  }
+
+  const total = msg.resumenCiudades?.length ?? 0;
+
+  if (total <= 1) {
+    return 'w-full max-w-[90%]';
+  }
+
+  if (total === 2) {
+    return 'w-full max-w-[96%]';
+  }
+
+  return 'w-full max-w-full';
+}
+
 export default function Home() {
   const [mensaje, setMensaje] = useState('');
   const [historial, setHistorial] = useState<MensajeHistorial[]>([]);
@@ -322,7 +358,7 @@ export default function Home() {
         {historial.map((msg, idx) => (
           <div
             key={idx}
-            className={`p-4 rounded-lg max-w-[85%] border ${
+            className={`p-4 rounded-lg border ${getMessageWidthClass(msg)} ${
               msg.role === 'user'
                 ? 'bg-blue-200 border-blue-200 self-end text-black'
                 : `${getMessageAirTone(msg.resumenCiudades).caja} self-start text-black`
@@ -353,13 +389,13 @@ export default function Home() {
               )}
             </div>
             {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 0 && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className={`mt-3 grid gap-3 w-full ${getSummaryGridClass(msg.resumenCiudades)}`}>
                 {msg.resumenCiudades.map((resumen) => {
                   const aire = getAirQualityVisual(resumen.calidadAireCategoria);
                   const recomendacionAire = getAirQualityRecommendation(resumen.calidadAireCategoria);
 
                   return (
-                    <div key={resumen.ciudad} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div key={resumen.ciudad} className="rounded-xl border border-slate-200 bg-slate-50 p-3 w-full min-w-0">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-slate-900 leading-5">{resumen.ciudad}</p>
