@@ -411,6 +411,14 @@ function splitMultiLocationCandidate(value: string) {
   const commaCount = (cleaned.match(/,/g) || []).length;
   const separatorPattern = /\s+(?:vs|contra|versus|y|e|o)\s+/i;
 
+  if (commaCount >= 1 && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned)) {
+    return cleaned
+      .replace(/\s+(?:y|e|vs|contra|versus)\s+/gi, ",")
+      .split(",")
+      .map((item) => cleanCityCandidate(item))
+      .filter((item) => item.length > 0);
+  }
+
   if (commaCount >= 2) {
     return cleaned
       .split(",")
@@ -426,6 +434,21 @@ function splitMultiLocationCandidate(value: string) {
   }
 
   return [cleaned];
+}
+
+function isLikelyLocationList(value: string, message: string) {
+  const cleaned = cleanCityCandidate(value);
+  const commaCount = (cleaned.match(/,/g) || []).length;
+
+  if (commaCount >= 2) {
+    return true;
+  }
+
+  if (commaCount >= 1 && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned)) {
+    return true;
+  }
+
+  return hasComparisonIntent(message) && /\s+(?:y|e|vs|contra|versus)\s+/i.test(cleaned);
 }
 
 function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknown[]): string[] {
@@ -449,7 +472,13 @@ function extractRequestedCities(mensajeUsuario: string, historialUsuario: unknow
 
     for (const candidate of match.slice(1)) {
       if (typeof candidate === "string") {
-        addCandidate(candidates, candidate);
+        const splitCandidates = isLikelyLocationList(candidate, message)
+          ? splitMultiLocationCandidate(candidate)
+          : [candidate];
+
+        for (const splitCandidate of splitCandidates) {
+          addCandidate(candidates, splitCandidate);
+        }
       }
     }
   }
@@ -555,6 +584,29 @@ async function resolveRequestedCities(mensajeUsuario: string, historialUsuario: 
   const resolvedCities: ResolvedCity[] = [];
 
   for (const rawCandidate of cityCandidates) {
+    if (isLikelyLocationList(rawCandidate, mensajeUsuario)) {
+      const splitCandidates = splitMultiLocationCandidate(rawCandidate);
+
+      for (const splitCandidate of splitCandidates) {
+        try {
+          const city = await resolveSingleCityCandidate(splitCandidate);
+          if (!resolvedCities.some((item) => normalizeText(item.displayName) === normalizeText(city.displayName))) {
+            resolvedCities.push(city);
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (resolvedCities.length > 0) {
+        if (resolvedCities.length >= MAX_CITY_CANDIDATES) {
+          break;
+        }
+
+        continue;
+      }
+    }
+
     const candidateVariants = Array.from(
       new Set([
         rawCandidate,

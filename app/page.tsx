@@ -268,6 +268,46 @@ function getMessageWidthClass(msg: MensajeHistorial) {
   return 'w-full max-w-full';
 }
 
+function getClimateSeverityScore(resumen: ResumenCiudad) {
+  const temperatura = resumen.temperaturaC ?? 0;
+  const precipitacion = resumen.precipitacionMm ?? 0;
+  const humedad = resumen.humedadPct ?? 0;
+
+  const calor = temperatura > 32 ? (temperatura - 32) * 3 : 0;
+  const frio = temperatura < 10 ? (10 - temperatura) * 2 : 0;
+  const lluvia = precipitacion * 4;
+  const bochorno = temperatura >= 28 && humedad >= 65 ? 6 : 0;
+
+  return calor + frio + lluvia + bochorno;
+}
+
+function getWorstAirRanking(resumenCiudades: ResumenCiudad[]) {
+  return [...resumenCiudades].sort((left, right) => {
+    const leftAqi = left.calidadAireAqi ?? -1;
+    const rightAqi = right.calidadAireAqi ?? -1;
+    return rightAqi - leftAqi;
+  });
+}
+
+function getWorstClimateRanking(resumenCiudades: ResumenCiudad[]) {
+  return [...resumenCiudades].sort((left, right) => {
+    return getClimateSeverityScore(right) - getClimateSeverityScore(left);
+  });
+}
+
+function getRankingMedal(index: number) {
+  switch (index) {
+    case 0:
+      return '🥇';
+    case 1:
+      return '🥈';
+    case 2:
+      return '🥉';
+    default:
+      return '•';
+  }
+}
+
 export default function Home() {
   const [mensaje, setMensaje] = useState('');
   const [historial, setHistorial] = useState<MensajeHistorial[]>([]);
@@ -388,6 +428,41 @@ export default function Home() {
                 </span>
               )}
             </div>
+            {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 1 && (
+              <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
+                  <p className="text-sm font-semibold text-slate-900">Ranking aire</p>
+                  <p className="mt-1 text-xs text-slate-500">Ordenado por AQI europeo más alto.</p>
+                  <div className="mt-3 space-y-2">
+                    {getWorstAirRanking(msg.resumenCiudades).map((resumen, index) => (
+                      <div key={`${resumen.ciudad}-air-rank`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{getRankingMedal(index)} {resumen.ciudad}</p>
+                          <p className="text-xs text-slate-500">{resumen.calidadAireCategoria ?? 'Sin categoría de aire'}</p>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-800">AQI {resumen.calidadAireAqi ?? 'Sin dato'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
+                  <p className="text-sm font-semibold text-slate-900">Ranking clima</p>
+                  <p className="mt-1 text-xs text-slate-500">Basado en temperatura, precipitación y bochorno actual.</p>
+                  <div className="mt-3 space-y-2">
+                    {getWorstClimateRanking(msg.resumenCiudades).map((resumen, index) => (
+                      <div key={`${resumen.ciudad}-weather-rank`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{getRankingMedal(index)} {resumen.ciudad}</p>
+                          <p className="text-xs text-slate-500">{formatMetric(resumen.temperaturaC, '°C')} · {formatMetric(resumen.precipitacionMm, ' mm')}</p>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-800">Puntaje {getClimateSeverityScore(resumen).toFixed(1)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             {msg.role === 'model' && Array.isArray(msg.resumenCiudades) && msg.resumenCiudades.length > 0 && (
               <div className={`mt-3 grid gap-3 w-full ${getSummaryGridClass(msg.resumenCiudades)}`}>
                 {msg.resumenCiudades.map((resumen) => {
