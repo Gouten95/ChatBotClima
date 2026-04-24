@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import type { ConversacionChat, FallbackInfo, MensajeHistorial } from '@/lib/chat-types';
@@ -30,9 +31,6 @@ export default function Home() {
     const rawSession = window.localStorage.getItem(CHAT_STORAGE_KEY)
       ?? window.sessionStorage.getItem(CHAT_STORAGE_KEY);
     if (!rawSession) {
-      const defaultConversation = createConversation();
-      setConversaciones([defaultConversation]);
-      setActiveChatId(defaultConversation.id);
       return;
     }
 
@@ -61,22 +59,17 @@ export default function Home() {
         setActiveChatId(migratedConversation.id);
         return;
       }
-
-      const defaultConversation = createConversation();
-      setConversaciones([defaultConversation]);
-      setActiveChatId(defaultConversation.id);
     } catch (error) {
       console.warn('No se pudo restaurar la sesion del chat.', error);
       window.localStorage.removeItem(CHAT_STORAGE_KEY);
       window.sessionStorage.removeItem(CHAT_STORAGE_KEY);
-      const defaultConversation = createConversation();
-      setConversaciones([defaultConversation]);
-      setActiveChatId(defaultConversation.id);
     }
   }, []);
 
   useEffect(() => {
     if (conversaciones.length === 0 || !activeChatId) {
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      window.sessionStorage.removeItem(CHAT_STORAGE_KEY);
       return;
     }
 
@@ -118,9 +111,12 @@ export default function Home() {
       const remaining = prev.filter((conversacion) => conversacion.id !== conversationId);
 
       if (remaining.length === 0) {
-        const nuevaConversacion = createConversation();
-        setActiveChatId(nuevaConversacion.id);
-        return [nuevaConversacion];
+        setActiveChatId('');
+        setMensaje('');
+        setErrorCritico('');
+        setAvisoFallback(null);
+        setMobileMenuOpen(false);
+        return [];
       }
 
       if (conversationId === activeChatId) {
@@ -228,12 +224,12 @@ export default function Home() {
 
             <div>
               <h2 className="text-lg font-semibold text-slate-900">
-                {conversacionActiva?.titulo || DEFAULT_CHAT_TITLE}
+                {conversacionActiva?.titulo || 'Sin conversación activa'}
               </h2>
               <p className="mt-1 text-sm text-slate-500">
                 {conversacionActiva && conversacionActiva.historial.length > 0
                   ? `${conversacionActiva.historial.length} mensajes en esta conversación`
-                  : 'Empieza una nueva consulta del clima'}
+                  : 'Crea una nueva conversación para comenzar'}
               </p>
             </div>
           </div>
@@ -249,25 +245,52 @@ export default function Home() {
           ref={chatContainerRef}
           className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-gray-100 p-4 md:p-6"
         >
-          <div className="flex flex-col gap-4">
-            {historial.length === 0 && !errorCritico && (
-              <p className="mt-10 text-center text-gray-500">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
-            )}
+          {!conversacionActiva ? (
+            <div
+              className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-6 text-center"
+              style={{ minHeight: 420 }}
+            >
+              <div className="max-w-md">
+                <div className="mx-auto mb-5 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
+                  <Image
+                    src="/BAKI-CLIMA.png"
+                    alt="Estado vacío del chat del Señor del Clima"
+                    width={320}
+                    height={320}
+                    className="h-auto w-full max-w-55 object-contain"
+                    priority
+                  />
+                </div>
+                <h3 className="text-xl font-semibold text-slate-900">Todavía no hay ningún chat activo</h3>
+                <p className="mt-3 text-sm leading-6 text-slate-500">
+                  Este espacio se muestra mientras no exista una conversación seleccionada.
+                </p>
+                <p className="mt-4 text-sm text-slate-600">
+                  Para empezar, usa el botón Nueva conversación del panel lateral.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {historial.length === 0 && !errorCritico && (
+                <p className="mt-10 text-center text-gray-500">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
+              )}
 
-            {avisoFallback && (
-              <p className={`border rounded p-3 ${avisoFallback.tono} ${avisoFallback.borde}`}>
-                {avisoFallback.texto}
-              </p>
-            )}
+              {avisoFallback && (
+                <p className={`border rounded p-3 ${avisoFallback.tono} ${avisoFallback.borde}`}>
+                  {avisoFallback.texto}
+                </p>
+              )}
 
-            {historial.map((msg, idx) => (
-              <ChatMessage key={idx} msg={msg} />
-            ))}
+              {historial.map((msg, idx) => (
+                <ChatMessage key={idx} msg={msg} />
+              ))}
 
-            {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
-            {errorCritico && <p className="rounded bg-red-100 p-3 font-bold text-red-600">{errorCritico}</p>}
-            <div ref={chatBottomRef} />
-          </div>
+              {cargando && <p className="text-gray-500 italic">Consultando los radares...</p>}
+              {errorCritico && <p className="rounded bg-red-100 p-3 font-bold text-red-600">{errorCritico}</p>}
+              <div ref={chatBottomRef} />
+            </div>
+          )}
         </div>
 
         <form onSubmit={enviarMensaje} className="mt-4 flex gap-2 pb-4 md:pb-0">
