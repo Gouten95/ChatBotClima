@@ -248,26 +248,29 @@ export default function Home() {
           {!conversacionActiva ? (
             <div
               className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-6 text-center"
-              style={{ minHeight: 420 }}
+              style={{ minHeight: 620 }}
             >
-              <div className="max-w-md">
-                <div className="mx-auto mb-5 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
+              <div className="w-full max-w-4xl">
+                <div className="mx-auto mb-8 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
                   <Image
                     src="/BAKI-CLIMA-v2.png"
                     alt="Estado vacío del chat del Señor del Clima"
-                    width={320}
-                    height={320}
-                    className="h-auto w-full max-w-55 object-contain"
+                    width={2048}
+                    height={2048}
+                    className="h-auto w-full object-contain"
+                    sizes="(max-width: 768px) 100vw, 900px"
                     priority
                   />
                 </div>
-                <h3 className="text-xl font-semibold text-slate-900">Todavía no hay ningún chat activo</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-500">
-                  Este espacio se muestra mientras no exista una conversación seleccionada.
-                </p>
-                <p className="mt-4 text-sm text-slate-600">
-                  Para empezar, usa el botón Nueva conversación del panel lateral.
-                </p>
+                <div className="mx-auto max-w-2xl">
+                  <h3 className="text-xl font-semibold text-slate-900">Todavía no hay ningún chat activo</h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-500">
+                    Este espacio se muestra mientras no exista una conversación seleccionada.
+                  </p>
+                  <p className="mt-4 text-sm text-slate-600">
+                    Para empezar, usa el botón Nueva conversación del panel lateral.
+                  </p>
+                </div>
               </div>
             </div>
           ) : (
