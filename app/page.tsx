@@ -253,7 +253,7 @@ export default function Home() {
               <div className="max-w-md">
                 <div className="mx-auto mb-5 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-sm">
                   <Image
-                    src="/BAKI-CLIMA.png"
+                    src="/BAKI-CLIMA-v2.png"
                     alt="Estado vacío del chat del Señor del Clima"
                     width={320}
                     height={320}
