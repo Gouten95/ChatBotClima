@@ -17,6 +17,7 @@ export default function Home() {
   const [mensaje, setMensaje] = useState('');
   const [conversaciones, setConversaciones] = useState<ConversacionChat[]>([]);
   const [activeChatId, setActiveChatId] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [errorCritico, setErrorCritico] = useState('');
   const [avisoFallback, setAvisoFallback] = useState<FallbackInfo | null>(null);
@@ -91,6 +92,14 @@ export default function Home() {
   }, [activeChatId]);
 
   useEffect(() => {
+    document.body.style.overflow = mobileMenuOpen ? 'hidden' : '';
+
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [historial, cargando, errorCritico, avisoFallback]);
 
@@ -98,6 +107,7 @@ export default function Home() {
     const nuevaConversacion = createConversation(`Conversación ${conversaciones.length + 1}`);
     setConversaciones((prev) => [nuevaConversacion, ...prev]);
     setActiveChatId(nuevaConversacion.id);
+    setMobileMenuOpen(false);
     setMensaje('');
     setErrorCritico('');
     setAvisoFallback(null);
@@ -193,32 +203,51 @@ export default function Home() {
   };
 
   return (
-    <main className="mx-auto grid h-screen max-w-7xl gap-4 p-4 md:p-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+    <main className="mx-auto grid h-screen max-w-7xl gap-4 p-0 md:p-6 lg:grid-cols-[280px_minmax(0,1fr)]">
       <ChatSidebar
         conversaciones={conversaciones}
         activeChatId={activeChatId}
+        isMobileOpen={mobileMenuOpen}
         onCreateConversation={crearNuevaConversacion}
         onSelectConversation={setActiveChatId}
         onDeleteConversation={eliminarConversacion}
+        onCloseMobileMenu={() => setMobileMenuOpen(false)}
       />
 
-      <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+      <section className="flex min-h-0 flex-col bg-white p-4 shadow-sm md:rounded-2xl md:border md:border-slate-200 md:p-6">
         <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-200 pb-4">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="inline-flex rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 md:hidden"
+              aria-label="Abrir menú de conversaciones"
+            >
+              <span className="text-lg leading-none">☰</span>
+            </button>
+
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {conversacionActiva?.titulo || DEFAULT_CHAT_TITLE}
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {conversacionActiva && conversacionActiva.historial.length > 0
+                  ? `${conversacionActiva.historial.length} mensajes en esta conversación`
+                  : 'Empieza una nueva consulta del clima'}
+              </p>
+            </div>
+          </div>
+
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
-              {conversacionActiva?.titulo || DEFAULT_CHAT_TITLE}
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {conversacionActiva && conversacionActiva.historial.length > 0
-                ? `${conversacionActiva.historial.length} mensajes en esta conversación`
-                : 'Empieza una nueva consulta del clima'}
-            </p>
+            <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 md:inline-flex">
+              {conversaciones.length} conversaciones
+            </span>
           </div>
         </div>
 
         <div
           ref={chatContainerRef}
-          className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-gray-100 p-6"
+          className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-gray-100 p-4 md:p-6"
         >
           <div className="flex flex-col gap-4">
             {historial.length === 0 && !errorCritico && (
@@ -241,7 +270,7 @@ export default function Home() {
           </div>
         </div>
 
-        <form onSubmit={enviarMensaje} className="mt-4 flex gap-2">
+        <form onSubmit={enviarMensaje} className="mt-4 flex gap-2 pb-4 md:pb-0">
           <input
             type="text"
             value={mensaje}

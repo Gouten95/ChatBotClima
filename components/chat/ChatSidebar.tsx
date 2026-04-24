@@ -7,20 +7,48 @@ import {
 type ChatSidebarProps = {
   conversaciones: ConversacionChat[];
   activeChatId: string;
+  isMobileOpen: boolean;
   onCreateConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
+  onCloseMobileMenu: () => void;
 };
 
 export function ChatSidebar({
   conversaciones,
   activeChatId,
+  isMobileOpen,
   onCreateConversation,
   onSelectConversation,
   onDeleteConversation,
+  onCloseMobileMenu,
 }: ChatSidebarProps) {
   return (
-    <aside className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <>
+      <div
+        className={`fixed inset-0 z-30 bg-slate-950/35 transition md:hidden ${
+          isMobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+        onClick={onCloseMobileMenu}
+        aria-hidden="true"
+      />
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[88vw] max-w-[320px] min-h-0 flex-col border-r border-slate-200 bg-white p-4 shadow-xl transition-transform md:static md:w-auto md:max-w-none md:translate-x-0 md:rounded-2xl md:border md:shadow-sm ${
+          isMobileOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between md:hidden">
+          <p className="text-sm font-semibold text-slate-900">Conversaciones</p>
+          <button
+            type="button"
+            onClick={onCloseMobileMenu}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600"
+          >
+            Cerrar
+          </button>
+        </div>
+
       <div className="border-b border-slate-200 pb-4">
         <h1 className="text-2xl font-bold text-blue-600">🌤️ El Señor del Clima</h1>
         <p className="mt-2 text-sm text-slate-500">
@@ -52,7 +80,10 @@ export function ChatSidebar({
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
-                    onClick={() => onSelectConversation(conversacion.id)}
+                    onClick={() => {
+                      onSelectConversation(conversacion.id);
+                      onCloseMobileMenu();
+                    }}
                     className="min-w-0 flex-1 text-left"
                   >
                     <p className="truncate text-sm font-semibold text-slate-900">
@@ -81,6 +112,7 @@ export function ChatSidebar({
           })}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
