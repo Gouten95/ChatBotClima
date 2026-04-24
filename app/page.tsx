@@ -297,7 +297,7 @@ export default function Home() {
           )}
         </div>
 
-        {conversacionActiva ? (
+        {conversacionActiva && (
           <form onSubmit={enviarMensaje} className="mt-4 flex gap-2 pb-4 md:pb-0">
             <input
               type="text"
