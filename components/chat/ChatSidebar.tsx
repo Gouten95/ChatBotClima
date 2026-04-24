@@ -34,7 +34,7 @@ export function ChatSidebar({
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[88vw] max-w-[320px] min-h-0 flex-col border-r border-slate-200 bg-white p-4 shadow-xl transition-transform md:static md:w-auto md:max-w-none md:translate-x-0 md:rounded-2xl md:border md:shadow-sm ${
+        className={`ui-panel fixed inset-y-0 left-0 z-40 flex w-[88vw] max-w-[320px] min-h-0 flex-col border-r border-slate-200 bg-white p-4 shadow-xl transition-transform md:static md:w-auto md:max-w-none md:translate-x-0 md:rounded-2xl md:border md:shadow-sm ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -57,13 +57,13 @@ export function ChatSidebar({
           <button
             type="button"
             onClick={onCreateConversation}
-            className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+            className="ui-panel mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
           >
             Nueva conversación
           </button>
         </div>
 
-        <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+        <div className="stable-scroll-area mt-4 min-h-0 flex-1 overflow-y-auto">
           {conversaciones.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
               Aún no hay conversaciones. Crea una nueva para empezar.
@@ -76,7 +76,7 @@ export function ChatSidebar({
                 return (
                   <div
                     key={conversacion.id}
-                    className={`rounded-xl border p-3 transition ${
+                    className={`ui-panel ui-pop rounded-xl border p-3 transition ${
                       isActive
                         ? 'border-blue-300 bg-blue-50 shadow-sm'
                         : 'border-slate-200 bg-slate-50 hover:bg-slate-100'

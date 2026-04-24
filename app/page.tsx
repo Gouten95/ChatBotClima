@@ -210,7 +210,7 @@ export default function Home() {
         onCloseMobileMenu={() => setMobileMenuOpen(false)}
       />
 
-      <section className="flex min-h-0 flex-col bg-white p-4 shadow-sm md:rounded-2xl md:border md:border-slate-200 md:p-6">
+      <section className="ui-panel ui-appear flex min-h-0 flex-col bg-white p-4 shadow-sm md:rounded-2xl md:border md:border-slate-200 md:p-6">
         <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-200 pb-4">
           <div className="flex items-center gap-3">
             <button
@@ -243,14 +243,16 @@ export default function Home() {
 
         <div
           ref={chatContainerRef}
-          className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-300 bg-gray-100 p-4 md:p-6"
+          className={`stable-scroll-area min-h-0 flex-1 rounded-xl border border-gray-300 bg-gray-100 p-4 md:p-6 ${
+            conversacionActiva ? 'overflow-y-auto' : 'overflow-hidden'
+          }`}
         >
           {!conversacionActiva ? (
             <div
-              className="flex min-h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-8 text-center md:px-6"
+              className="ui-appear-delayed flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-8 text-center md:px-6"
             >
               <div className="flex w-full max-w-3xl flex-col items-center gap-6">
-                <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 p-3 shadow-sm md:p-4">
+                <div className="ui-panel ui-pop w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 p-3 shadow-sm md:p-4">
                   <Image
                     src="/BAKI-CLIMA-v2.png"
                     alt="Estado vacío del chat del Señor del Clima"
@@ -273,7 +275,7 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div className="ui-appear flex flex-col gap-4">
               {historial.length === 0 && !errorCritico && (
                 <p className="mt-10 text-center text-gray-500">¡Hola! Soy el Señor del Clima. ¿En qué te ayudo hoy?</p>
               )}
@@ -295,23 +297,27 @@ export default function Home() {
           )}
         </div>
 
-        <form onSubmit={enviarMensaje} className="mt-4 flex gap-2 pb-4 md:pb-0">
-          <input
-            type="text"
-            value={mensaje}
-            onChange={(e) => setMensaje(e.target.value)}
-            placeholder="Ej: ¿Qué ropa me pongo para salir al parque?"
-            className="flex-1 rounded-xl border border-gray-300 bg-white p-3 text-gray-900"
-            disabled={cargando || !conversacionActiva}
-          />
-          <button
-            type="submit"
-            disabled={cargando || !mensaje.trim() || !conversacionActiva}
-            className="rounded-xl bg-blue-600 px-6 py-3 text-white transition hover:bg-blue-700 disabled:bg-blue-300"
-          >
-            Enviar
-          </button>
-        </form>
+        {conversacionActiva ? (
+          <form onSubmit={enviarMensaje} className="mt-4 flex gap-2 pb-4 md:pb-0">
+            <input
+              type="text"
+              value={mensaje}
+              onChange={(e) => setMensaje(e.target.value)}
+              placeholder="Ej: ¿Qué ropa me pongo para salir al parque?"
+              className="ui-panel flex-1 rounded-xl border border-gray-300 bg-white p-3 text-gray-900"
+              disabled={cargando}
+            />
+            <button
+              type="submit"
+              disabled={cargando || !mensaje.trim()}
+              className="ui-panel rounded-xl bg-blue-600 px-6 py-3 text-white transition hover:bg-blue-700 disabled:bg-blue-300"
+            >
+              Enviar
+            </button>
+          </form>
+        ) : (
+          <div className="mt-4 h-[72px] shrink-0 pb-4 md:pb-0" aria-hidden="true" />
+        )}
       </section>
     </main>
   );

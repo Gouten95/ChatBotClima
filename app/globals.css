@@ -24,3 +24,79 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+.stable-scroll-area {
+  scrollbar-gutter: stable both-edges;
+}
+
+.ui-panel {
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    background-color 220ms ease,
+    opacity 220ms ease;
+}
+
+.ui-panel:hover {
+  transform: translateY(-1px);
+}
+
+.ui-appear {
+  animation: ui-fade-up 320ms ease both;
+}
+
+.ui-appear-delayed {
+  animation: ui-fade-up 460ms ease both;
+}
+
+.ui-pop {
+  animation: ui-pop-in 280ms ease both;
+}
+
+.ui-pulse-soft {
+  animation: ui-pulse-soft 2.8s ease-in-out infinite;
+}
+
+@keyframes ui-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ui-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ui-pulse-soft {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.015);
+  }
+}

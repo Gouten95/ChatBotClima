@@ -22,7 +22,7 @@ type ChatMessageProps = {
 export function ChatMessage({ msg }: ChatMessageProps) {
   return (
     <div
-      className={`p-4 rounded-lg border ${getMessageWidthClass(msg)} ${
+      className={`ui-panel ui-appear p-4 rounded-lg border ${getMessageWidthClass(msg)} ${
         msg.role === 'user'
           ? 'bg-blue-200 border-blue-200 self-end text-black'
           : `${getMessageAirTone(msg.resumenCiudades).caja} self-start text-black`
