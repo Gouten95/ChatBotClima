@@ -249,9 +249,9 @@ export default function Home() {
         >
           {!conversacionActiva ? (
             <div
-              className="ui-appear-delayed flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-8 text-center md:px-6"
+              className="ui-appear-delayed flex h-full flex-col rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-6 text-center md:px-6 md:py-8"
             >
-              <div className="flex w-full max-w-3xl flex-col items-center gap-6">
+              <div className="flex h-full w-full flex-col items-center justify-center gap-6">
                 <div className="ui-panel ui-pop w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 p-3 shadow-sm md:p-4">
                   <Image
                     src="/BAKI-CLIMA-v2.png"
@@ -315,8 +315,6 @@ export default function Home() {
               Enviar
             </button>
           </form>
-        ) : (
-          <div className="mt-4 h-[72px] shrink-0 pb-4 md:pb-0" aria-hidden="true" />
         )}
       </section>
     </main>
